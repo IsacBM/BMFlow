@@ -31,6 +31,25 @@ namespace DockBar
         private static readonly IntPtr MinimizeCommand = new IntPtr(0xF020); // SC_MINIMIZE
         private static readonly IntPtr CloseCommand = new IntPtr(0xF060); // SC_CLOSE
 
+        public static void ExcludeFromApplicationSwitcher(Window window)
+        {
+            if (window == null) return;
+            IntPtr handle = new WindowInteropHelper(window).Handle;
+            if (handle == IntPtr.Zero) return;
+
+            const int ExtendedStyle = -20; // GWL_EXSTYLE
+            const int ToolWindow = 0x00000080; // WS_EX_TOOLWINDOW
+            const int AppWindow = 0x00040000; // WS_EX_APPWINDOW
+            int style = GetWindowLong(handle, ExtendedStyle);
+            int backgroundStyle = (style | ToolWindow) & ~AppWindow;
+            if (backgroundStyle != style) SetWindowLong(handle, ExtendedStyle, backgroundStyle);
+
+            // Notifica o Shell imediatamente para remover qualquer miniatura já
+            // armazenada no Alt+Tab/Visão de Tarefas, sem mover ou ativar a janela.
+            const uint RefreshFrame = 0x0001 | 0x0002 | 0x0004 | 0x0010 | 0x0020;
+            SetWindowPos(handle, IntPtr.Zero, 0, 0, 0, 0, RefreshFrame);
+        }
+
         public static bool IsAlive(IntPtr window)
         {
             return window != IntPtr.Zero && IsWindow(window);
@@ -98,6 +117,15 @@ namespace DockBar
 
         [DllImport("user32.dll")]
         private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
+
+        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+        private static extern int GetWindowLong(IntPtr window, int index);
+
+        [DllImport("user32.dll", EntryPoint = "SetWindowLongW", SetLastError = true)]
+        private static extern int SetWindowLong(IntPtr window, int index, int newStyle);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
     }
 
 }

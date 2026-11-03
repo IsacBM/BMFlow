@@ -5804,6 +5804,7 @@ namespace DockBar
         private void InitializeNativeDock()
         {
             dockHandle = new WindowInteropHelper(this).Handle;
+            WindowCommands.ExcludeFromApplicationSwitcher(this);
             dockSource = HwndSource.FromHwnd(dockHandle);
             if (dockSource != null) dockSource.AddHook(DockWindowProcedure);
             StartForegroundTracking();

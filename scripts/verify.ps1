@@ -108,6 +108,8 @@ foreach ($position in @('Inferior', 'Superior', 'Esquerda', 'Direita')) {
     Assert-Condition ($dockPlacementText.Contains('"' + $position + '"')) "Posição da Dock disponível: $position"
 }
 Assert-Condition ($allSourceText.Contains('"DockPosition="')) 'Posição da Dock é persistida nas configurações'
+$switcherExclusions = [regex]::Matches($allSourceText, '\bExcludeFromApplicationSwitcher\s*\(').Count
+Assert-Condition ($switcherExclusions -ge 3) 'Dock e widget permanecem excluídos do Alt+Tab e da Visão de Tarefas'
 $expectedClasses = @(
     'App',
     'DockWindow',

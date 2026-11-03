@@ -28,6 +28,7 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 
 ### Corrigido
 
+- Dock e widget de relógio não aparecem mais no Alt+Tab nem na Visão de Tarefas do Windows.
 - Submenus do mascote agora usam o mesmo tema fluido e contraste dos demais menus da Dock.
 - Ao dormir, o mascote agora descansa exatamente no local onde parou na Dock em vez de ser teleportado para a origem.
 - O indicador de execução acompanha o centro visual do ícone durante a onda nas laterais, sem ser ampliado.

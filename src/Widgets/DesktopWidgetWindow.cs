@@ -68,6 +68,7 @@ namespace DockBar
             SizeToContent = SizeToContent.WidthAndHeight;
             WindowStartupLocation = WindowStartupLocation.Manual;
             Focusable = false;
+            SourceInitialized += delegate { WindowCommands.ExcludeFromApplicationSwitcher(this); };
 
             TextOptions.SetTextRenderingMode(this, TextRenderingMode.ClearType);
             TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
