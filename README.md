@@ -1,54 +1,107 @@
 # B.M Flow
 
-Uma Dock nativa e fluida para Windows 10/11, integrada aos aplicativos, janelas e painéis do sistema.
-
 > Sua área de trabalho em movimento.
 
-## Compilar
+B.M Flow é uma dock nativa para Windows 11, feita em C# e WPF. Ela reúne aplicativos fixados e abertos, controles do sistema, espaços de trabalho, widgets e mascotes animados em uma interface fluida acima da barra de tarefas.
 
-Abra o PowerShell nesta pasta e execute:
+O projeto está aberto para aprender, evoluir e construir junto com a comunidade. 💙
+
+![Windows 11](https://img.shields.io/badge/Windows%20%7C%2011-0078D4?logo=windows&logoColor=white)
+![C#](https://img.shields.io/badge/C%23-WPF-512BD4?logo=dotnet&logoColor=white)
+![Licença MIT](https://img.shields.io/badge/c%C3%B3digo-MIT-green)
+
+## Visão geral
+
+- dock acrílica com temas, transparência, tamanho e posição configuráveis;
+- aplicativos fixados e janelas abertas, com agrupamento, reordenação e indicadores;
+- miniaturas ao vivo, paginação e navegação completa por teclado;
+- Jump Lists, itens recentes, pastas frequentes e ações rápidas;
+- relógio, bateria, rede, volume, lixeira e bandeja do sistema;
+- ocultação automática, suporte a tela cheia e integração opcional como AppBar;
+- espaços de trabalho para abrir e restaurar conjuntos de aplicativos;
+- widget de relógio para a área de trabalho;
+- mascotes animados com diferentes aparências e comportamentos;
+- temas opcionais de cursor, com backup e restauração do esquema anterior;
+- detecção de assistentes instalados e integração com aplicativos em segundo plano.
+
+Widgets de mídia e clima estão entre as ideias para versões futuras.
+
+## Requisitos
+
+- Windows 11 de 64 bits;
+- PowerShell 5.1 ou mais recente para compilar;
+- .NET Framework 4.x com o compilador C# em `%WINDIR%\Microsoft.NET\Framework64\v4.0.30319`.
+
+O projeto usa somente componentes presentes no Windows e não depende de pacotes NuGet.
+
+## Como usar
+
+1. Baixe ou clone o repositório.
+2. Execute `BMFlow.exe`.
+3. Clique com o botão direito no fundo da dock para abrir as configurações.
+4. Para encerrar, escolha **Fechar B.M Flow** no mesmo menu.
+
+As preferências ficam em `%APPDATA%\BMFlow\settings.ini`. A opção **Iniciar com o Windows** altera somente a entrada `B.M Flow` na inicialização do usuário atual. Preferências e inicialização de versões antigas chamadas DockBar são migradas automaticamente.
+
+> [!IMPORTANT]
+> Guarde o executável junto das pastas `Mascots` e `Cursors`. Esses recursos são carregados a partir da pasta do programa.
+
+## Compilar do código-fonte
+
+Abra o PowerShell na raiz do projeto e execute:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
-O script usa o compilador do .NET Framework que já acompanha o Windows e gera `BMFlow.exe`.
+O script localiza as bibliotecas WPF instaladas no Windows, compila `DockBar.cs` e gera `BMFlow.exe` na raiz do repositório.
 
-## Usar
+Se aparecer a mensagem de que `BMFlow.exe` está sendo usado por outro processo, feche a B.M Flow antes de compilar novamente.
 
-Execute `BMFlow.exe`. A B.M Flow aparece acima da barra de tarefas. As preferências são salvas em `%APPDATA%\BMFlow\settings.ini`. A opção **Iniciar com o Windows** cria ou remove somente a entrada `B.M Flow` da inicialização do usuário atual. Para sair, clique com o botão direito no fundo da Dock e selecione **Fechar B.M Flow**.
+## Dados e alterações no sistema
 
-Ao executar a nova versão pela primeira vez, as preferências e a inicialização automática da antiga DockBar são migradas sem perder os ajustes existentes.
+A B.M Flow funciona localmente e salva suas configurações no perfil do usuário. Alguns recursos opcionais interagem com o Windows:
 
-A versão atual inclui:
+- **Iniciar com o Windows** altera `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`;
+- **Temas de cursor** alteram o esquema de cursores do usuário atual e mantêm um backup para restauração;
+- **Ocultar barra de tarefas original** muda sua visibilidade enquanto a B.M Flow está em execução;
+- um erro inesperado pode gerar `crash.log` ao lado do executável.
 
-- fundo acrílico translúcido;
-- atalhos fixados lidos da barra de tarefas e programas abertos acrescentados automaticamente;
-- ícones reais dos executáveis, ativação de janelas e indicadores de execução;
-- bateria, volume e relógio em tempo real;
-- clique no volume para ativar ou desativar o som;
-- opção **Ocultar barra de tarefas original** no menu de botão direito, restaurada automaticamente ao fechar a B.M Flow.
-- temas escuro e claro com transparência configurável;
-- agrupamento de várias janelas no mesmo aplicativo;
-- clique inteligente: restaura, minimiza ou alterna entre janelas;
-- Jump Lists completas estilo Windows 11 com seções organizadas (Janelas, Tarefas, Recentes/Frequentes e Fixação);
-- Exibição direta de arquivos recentes e pastas frequentes do sistema com ícones contextuais e submenu expansível;
-- Ações rápidas de aplicativo (Executar como Administrador, abas/janelas anônimas em navegadores, pastas rápidas no Explorer);
-- Detecção aprimorada de programas em segundo plano e bandeja (ex: Wallpaper Engine com indicador dedicado, alternância de plano de fundo e controles de pausa/retomada);
-- Menus de contexto e submenus com design fluente consistente (acrílico adaptativo, cantos arredondados e suporte dinâmico a tema claro/escuro);
-- animação de abertura em bounce;
-- miniatura ao vivo com botões de fechar, minimizar/restaurar e clique do meio para fechar;
-- agrupamento avançado para muitas janelas com paginação automática e cartões dinamicamente compactos;
-- navegação completa por teclado nas prévias (Setas, Tab, Home, End, PgUp, PgDn, Enter/Espaço, Delete, M e Esc);
-- suspensão e desregistro imediato de miniaturas DWM quando as prévias não estão visíveis ou em jogos de tela cheia, reduzindo o consumo de memória e GPU;
-- ocultação automática após 0,5 segundo, com revelação pela borda inferior;
-- suspensão automática durante jogos e aplicativos em tela cheia;
-- modo expansível: com auto-ocultação, janelas maximizadas usam a tela inteira e a Dock aparece por cima;
-- integração AppBar opcional no modo fixo para manter janelas maximizadas acima da Dock;
-- opções **Ocultar automaticamente** e **Manter janelas acima da Dock** no menu de botão direito.
-- janela completa de configurações com galeria visual de temas e ajustes em tempo real;
-- opção **Iniciar com o Windows**, sem necessidade de administrador;
-- preferências persistentes após fechar a Dock ou reiniciar o computador;
-- reordenação dos aplicativos por arrastar, com a ordem salva automaticamente.
+Nenhum desses recursos exige privilégios de administrador. Leia também [Solução de problemas](docs/TROUBLESHOOTING.md).
 
-Widgets opcionais de mídia e clima continuam planejados para etapas posteriores.
+## Estrutura do projeto
+
+```text
+.
+├── DockBar.cs             # aplicação WPF e integrações nativas do Windows
+├── build.ps1              # compilação com o .NET Framework do sistema
+├── Mascots/               # quadros de animação dos mascotes
+├── Cursors/               # temas e arquivos de cursor
+├── docs/                  # arquitetura, desenvolvimento e assets
+└── .github/               # templates para colaboração no GitHub
+```
+
+O código está atualmente concentrado em um único arquivo para permitir compilação sem SDK ou dependências externas. O mapa interno está em [Arquitetura](docs/ARCHITECTURE.md).
+
+## Contribuir
+
+Contribuições de todos os níveis são bem-vindas — correções, documentação, testes, traduções, acessibilidade, desempenho e novas ideias.
+
+Antes de começar:
+
+1. leia o [Guia de contribuição](CONTRIBUTING.md);
+2. confira as issues existentes;
+3. para mudanças maiores, abra uma discussão ou issue antes da implementação;
+4. siga nosso [Código de Conduta](CODE_OF_CONDUCT.md).
+
+Encontrou uma falha de segurança? Não abra uma issue pública; consulte [SECURITY.md](SECURITY.md).
+
+## Licença e recursos visuais
+
+O código-fonte e a documentação produzidos para a B.M Flow estão disponíveis sob a [Licença MIT](LICENSE).
+
+Imagens, sprites e cursores podem ter autoria ou condições próprias e não devem ser considerados automaticamente cobertos pela licença do código. Consulte [Assets e créditos](docs/ASSETS.md) e [Avisos de terceiros](THIRD_PARTY_NOTICES.md) antes de redistribuí-los.
+
+---
+
+Feito com carinho por uma família e por cada pessoa que decidir construir com a gente.

@@ -1,0 +1,15 @@
+# Build e diagnóstico locais
+DockBar.exe
+crash.log
+*.pdb
+
+# IDEs e ferramentas
+.vs/
+.vscode/
+bin/
+obj/
+TestResults/
+
+# Sistema operacional
+Thumbs.db
+Desktop.ini

@@ -1,0 +1,9 @@
+* text=auto
+*.cs text eol=crlf
+*.ps1 text eol=crlf
+*.md text eol=lf
+*.png binary
+*.aseprite binary
+*.cur binary
+*.ani binary
+*.exe binary

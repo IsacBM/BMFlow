@@ -1,0 +1,68 @@
+name: Relatar um bug
+description: Informe um comportamento incorreto ou inesperado.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Obrigado por ajudar a melhorar a B.M Flow. Remova dados pessoais de capturas e logs.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verificações iniciais
+      options:
+        - label: Procurei por issues semelhantes.
+          required: true
+        - label: Testei com a versão mais recente disponível.
+          required: true
+        - label: Revisei logs e imagens para remover dados pessoais.
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão ou commit da B.M Flow
+      placeholder: Ex. 0.1.0 ou e5c2b5a
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows
+      description: Informe edição, versão e número de compilação.
+      placeholder: Ex. Windows 11 24H2, build 26100
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: O que aconteceu?
+      description: Diga também o que você esperava que acontecesse.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. Abra...
+        2. Clique em...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Ambiente relevante
+      description: Escala, monitores, tema, barra de tarefas, configuração da dock e frequência do problema.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs ou imagens
+      description: Cole um trecho revisado do crash.log ou arraste capturas/gravações aqui.
+      render: shell
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto adicional

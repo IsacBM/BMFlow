@@ -1,0 +1,54 @@
+name: Sugerir uma melhoria
+description: Proponha uma ideia ou evolução para a B.M Flow.
+title: "[Ideia]: "
+labels:
+  - enhancement
+body:
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Verificações iniciais
+      options:
+        - label: Procurei por sugestões semelhantes.
+          required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Qual problema essa ideia resolve?
+      description: Conte a situação de uso antes de descrever a solução.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Solução proposta
+      description: Explique como você imagina o comportamento e a interface.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternativas consideradas
+  - type: dropdown
+    id: area
+    attributes:
+      label: Área principal
+      options:
+        - Dock e aplicativos
+        - Aparência e temas
+        - Prévia de janelas
+        - Espaços de trabalho
+        - Widget
+        - Mascotes
+        - Cursores
+        - Acessibilidade
+        - Desempenho
+        - Documentação
+        - Outra
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Contexto, referências ou mockups
+      description: Só inclua recursos que possam ser compartilhados e informe autoria/origem.
