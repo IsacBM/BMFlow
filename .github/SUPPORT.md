@@ -2,7 +2,7 @@
 
 ## Dúvidas de uso
 
-Consulte primeiro o [README](README.md) e o guia de [Solução de problemas](docs/TROUBLESHOOTING.md). Se a resposta não estiver lá, abra uma discussão no GitHub, quando disponível.
+Consulte primeiro o [README](../README.md) e o guia de [Solução de problemas](../docs/TROUBLESHOOTING.md). Se a resposta não estiver lá, abra uma discussão no GitHub, quando disponível.
 
 ## Bugs
 

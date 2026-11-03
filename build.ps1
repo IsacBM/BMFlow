@@ -4,7 +4,7 @@ $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 $output = Join-Path $PSScriptRoot 'BMFlow.exe'
 $legacyOutput = Join-Path $PSScriptRoot 'DockBar.exe'
 $source = Join-Path $PSScriptRoot 'DockBar.cs'
-$startIcon = Join-Path $PSScriptRoot 'windows11.png'
+$startIcon = Join-Path $PSScriptRoot 'Assets\Images\windows11.png'
 $assemblyRoot = Join-Path $env:WINDIR 'Microsoft.NET\assembly'
 
 if (-not (Test-Path -LiteralPath $compiler)) {

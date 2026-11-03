@@ -6,7 +6,7 @@ O repositório contém código e documentação, mas também imagens, sprites e 
 
 | Caminho | Uso | Situação antes de redistribuir |
 | --- | --- | --- |
-| `windows11.png` | Recurso incorporado e identidade visual do executável | Confirmar autoria e registrar a licença do arquivo. |
+| `Assets/Images/windows11.png` | Imagem incorporada usada no botão Iniciar da dock | Confirmar autoria e registrar a licença do arquivo. |
 | `Cat-Sheet.png` e `Cat.aseprite` | Fonte de animação de gato | Confirmar autoria e registrar a licença do arquivo-fonte. |
 | `Mascots/` | Quadros dos mascotes animados | Registrar autor e licença de cada família de sprites. |
 | `Cursors/DarkCursors/` | Tema escuro de cursor | Registrar origem e permissão de redistribuição. |

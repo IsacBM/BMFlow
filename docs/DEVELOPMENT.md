@@ -19,7 +19,7 @@ O script:
 
 1. localiza `csc.exe` no .NET Framework de 64 bits;
 2. encontra assemblies WPF no cache de assemblies do Windows;
-3. incorpora `windows11.png` como recurso;
+3. incorpora `Assets/Images/windows11.png` como recurso;
 4. compila `DockBar.cs` como aplicativo gráfico otimizado;
 5. grava `BMFlow.exe` na raiz.
 

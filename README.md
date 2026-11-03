@@ -75,10 +75,11 @@ Nenhum desses recursos exige privilégios de administrador. Leia também [Soluç
 .
 ├── DockBar.cs             # aplicação WPF e integrações nativas do Windows
 ├── build.ps1              # compilação com o .NET Framework do sistema
+├── Assets/Images/         # imagens incorporadas ao executável
 ├── Mascots/               # quadros de animação dos mascotes
 ├── Cursors/               # temas e arquivos de cursor
 ├── docs/                  # arquitetura, desenvolvimento e assets
-└── .github/               # templates para colaboração no GitHub
+└── .github/               # guias comunitários e templates do GitHub
 ```
 
 O código está atualmente concentrado em um único arquivo para permitir compilação sem SDK ou dependências externas. O mapa interno está em [Arquitetura](docs/ARCHITECTURE.md).
@@ -89,12 +90,12 @@ Contribuições de todos os níveis são bem-vindas — correções, documentaç
 
 Antes de começar:
 
-1. leia o [Guia de contribuição](CONTRIBUTING.md);
+1. leia o [Guia de contribuição](.github/CONTRIBUTING.md);
 2. confira as issues existentes;
 3. para mudanças maiores, abra uma discussão ou issue antes da implementação;
-4. siga nosso [Código de Conduta](CODE_OF_CONDUCT.md).
+4. siga nosso [Código de Conduta](.github/CODE_OF_CONDUCT.md).
 
-Encontrou uma falha de segurança? Não abra uma issue pública; consulte [SECURITY.md](SECURITY.md).
+Encontrou uma falha de segurança? Não abra uma issue pública; consulte nossa [Política de Segurança](.github/SECURITY.md).
 
 ## Licença e recursos visuais
 
@@ -104,4 +105,4 @@ Imagens, sprites e cursores podem ter autoria ou condições próprias e não de
 
 ---
 
-Feito com carinho por uma família e por cada pessoa que decidir construir com a gente.
+Feito com carinho para a comunidade.
