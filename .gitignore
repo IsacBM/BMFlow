@@ -9,6 +9,7 @@ crash.log
 bin/
 obj/
 TestResults/
+artifacts/
 
 # Sistema operacional
 Thumbs.db

@@ -18,7 +18,7 @@
 
 ## Checklist
 
-- [ ] Compilei com `build.ps1` sem erros.
+- [ ] Executei `scripts/verify.ps1` sem erros.
 - [ ] Testei a mudança manualmente no Windows.
 - [ ] Não incluí dados pessoais, segredos ou caminhos locais.
 - [ ] Atualizei a documentação ou expliquei por que não é necessário.

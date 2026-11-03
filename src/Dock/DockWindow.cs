@@ -25,39 +25,7 @@ using Forms = System.Windows.Forms;
 
 namespace DockBar
 {
-    public sealed class App : Application
-    {
-        [STAThread]
-        public static void Main()
-        {
-            AppDomain.CurrentDomain.UnhandledException += delegate(object s, UnhandledExceptionEventArgs e)
-            {
-                try { System.IO.File.WriteAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"), "UnhandledException: " + (e.ExceptionObject != null ? e.ExceptionObject.ToString() : "null")); } catch { }
-            };
-            try
-            {
-                bool firstInstance;
-                using (var singleInstance = new Mutex(true, @"Local\BMFlow.SingleInstance", out firstInstance))
-                {
-                    if (!firstInstance) return;
-                    var app = new App { ShutdownMode = ShutdownMode.OnMainWindowClose };
-                    app.DispatcherUnhandledException += delegate(object s, System.Windows.Threading.DispatcherUnhandledExceptionEventArgs e)
-                    {
-                        try { System.IO.File.WriteAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"), "DispatcherUnhandledException: " + (e.Exception != null ? e.Exception.ToString() : "null")); } catch { }
-                    };
-                    var win = new DockWindow();
-                    app.Run(win);
-                    GC.KeepAlive(singleInstance);
-                }
-            }
-            catch (Exception ex)
-            {
-                try { System.IO.File.WriteAllText(System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log"), "MainCatch: " + ex.ToString()); } catch { }
-            }
-        }
-    }
-
-    public sealed class DockWindow : Window
+    public sealed partial class DockWindow : Window
     {
         private static readonly int currentProcessId = ReadCurrentProcessId();
         private static readonly FontFamily windowsSystemIconFont = new FontFamily("Segoe Fluent Icons");
@@ -210,18 +178,28 @@ namespace DockBar
         private IntPtr trayOverflowEventHook;
         private int trayOverflowHookGeneration;
         private int trayPopupAnchorX;
+        private int trayPopupAnchorY;
+        private int trayPopupBarLeft;
         private int trayPopupBarTop;
+        private int trayPopupBarRight;
+        private int trayPopupBarBottom;
         private int trayPopupWorkLeft;
         private int trayPopupWorkRight;
         private int trayPopupWorkTop;
+        private int trayPopupWorkBottom;
         private WinEventDelegate quickSettingsEventDelegate;
         private IntPtr quickSettingsEventHook;
         private int quickSettingsHookGeneration;
         private int quickSettingsAnchorX;
+        private int quickSettingsAnchorY;
+        private int quickSettingsBarLeft;
         private int quickSettingsBarTop;
+        private int quickSettingsBarRight;
+        private int quickSettingsBarBottom;
         private int quickSettingsWorkLeft;
         private int quickSettingsWorkRight;
         private int quickSettingsWorkTop;
+        private int quickSettingsWorkBottom;
         private bool quickSettingsActive;
         private DispatcherTimer quickSettingsMonitorTimer;
         private WinEventDelegate startMenuEventDelegate;
@@ -249,6 +227,7 @@ namespace DockBar
         {
             public FrameworkElement Icon;
             public FrameworkElement Container;
+            public Border Indicator;
             public double Center;
             public double Scale;
             public double Growth;
@@ -468,6 +447,7 @@ namespace DockBar
         private UIElement BuildDock()
         {
             var root = new Grid { ClipToBounds = false, Background = Brushes.Transparent };
+            dockRoot = root;
             root.MouseEnter += delegate
             {
                 edgeRevealPending = false;
@@ -539,6 +519,22 @@ namespace DockBar
             menu.Items.Add(themeMenu);
             menu.Items.Add(new System.Windows.Controls.Separator());
             var sizeMenu = new MenuItem { Header = "Tamanho e posição" };
+            var positionMenu = new MenuItem { Header = "Posição na tela" };
+            foreach (string position in DockPositionChoices)
+            {
+                string selectedPosition = position;
+                var positionItem = new MenuItem
+                {
+                    Header = selectedPosition,
+                    IsCheckable = true,
+                    IsChecked = String.Equals(dockPosition, selectedPosition, StringComparison.OrdinalIgnoreCase)
+                };
+                positionItem.Click += delegate { SetDockPosition(selectedPosition); };
+                dockPositionMenuItems[selectedPosition] = positionItem;
+                positionMenu.Items.Add(positionItem);
+            }
+            sizeMenu.Items.Add(positionMenu);
+            sizeMenu.Items.Add(new System.Windows.Controls.Separator());
             sizeMenu.Items.Add(SliderMenuItem("Tamanho dos ícones", "px", 40, 64, dockIconSize, delegate(double value)
             {
                 dockIconSize = value;
@@ -549,7 +545,7 @@ namespace DockBar
             {
                 SetRunningIndicatorWidth(value);
             }));
-            sizeMenu.Items.Add(SliderMenuItem("Espaço inferior", "px", 0, 20, dockBottomGap, delegate(double value)
+            sizeMenu.Items.Add(SliderMenuItem("Espaço da borda", "px", 0, 20, dockBottomGap, delegate(double value)
             {
                 dockBottomGap = value;
                 UpdateAppBarRegistration();
@@ -638,7 +634,8 @@ namespace DockBar
             row.Children.Add(ImageTile(IconForShellPath(downloadsPath), "Downloads", delegate { Launch("explorer.exe", downloadsPath); }));
             row.Children.Add(RecycleBinTile());
             row.Children.Add(Separator());
-            row.Children.Add(SystemCard());
+            systemCardHolder = SystemCard();
+            row.Children.Add(systemCardHolder);
             PositionAssistantGroup();
 
             root.Children.Add(dockShell);
@@ -652,6 +649,7 @@ namespace DockBar
             };
             root.Children.Add(mascotCanvas);
             dockMascot = new DockMascot(this, mascotCanvas, dockShell, showMascot, mascotType, mascotMode, mascotScale);
+            ApplyDockOrientation();
             ApplyTheme();
             return root;
         }
@@ -959,6 +957,8 @@ namespace DockBar
                     dockOpacity = (byte)Math.Max(80, Math.Min(255, integer));
                 if (values.TryGetValue("IconSize", out text) && Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
                     dockIconSize = Math.Max(40, Math.Min(64, number));
+                if (values.TryGetValue("DockPosition", out text) && IsValidDockPosition(text))
+                    dockPosition = text;
                 if (values.TryGetValue("BottomGap", out text) && Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
                     dockBottomGap = Math.Max(0, Math.Min(20, number));
                 if (values.TryGetValue("IndicatorWidth", out text) && Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
@@ -984,7 +984,7 @@ namespace DockBar
                 if (values.TryGetValue("WidgetScale", out text) && Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) widgetScale = Math.Max(0.5, Math.Min(2.5, number));
                 if (values.TryGetValue("ShowMascot", out text) && Boolean.TryParse(text, out flag)) showMascot = flag;
                 if (values.TryGetValue("MascotType", out text) && !String.IsNullOrWhiteSpace(text)) mascotType = text;
-                if (values.TryGetValue("MascotMode", out text) && !String.IsNullOrWhiteSpace(text)) mascotMode = text;
+                if (values.TryGetValue("MascotMode", out text) && !String.IsNullOrWhiteSpace(text)) mascotMode = (text == "Sleep") ? "PatrolRight" : text;
                 if (values.TryGetValue("MascotScale", out text) && Double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out number)) mascotScale = Math.Max(0.6, Math.Min(3.0, number));
                 if (values.TryGetValue("AppOrder", out text) && !String.IsNullOrWhiteSpace(text))
                 {
@@ -1014,6 +1014,7 @@ namespace DockBar
                     "IconTileStyle=" + iconTileStyle,
                     "Opacity=" + dockOpacity.ToString(CultureInfo.InvariantCulture),
                     "IconSize=" + dockIconSize.ToString("0", CultureInfo.InvariantCulture),
+                    "DockPosition=" + dockPosition,
                     "BottomGap=" + dockBottomGap.ToString("0", CultureInfo.InvariantCulture),
                     "IndicatorWidth=" + runningIndicatorWidth.ToString("0", CultureInfo.InvariantCulture),
                     "AutoHide=" + autoHideEnabled.ToString(),
@@ -1279,7 +1280,6 @@ namespace DockBar
                 {
                     case "Wander": return "Passear pela Barra toda";
                     case "RunCat": return "Ritmo pela CPU (RunCat)";
-                    case "Sleep": return "Dormir / Descansar";
                     default: return "Canto Direito (Acima da Lixeira)";
                 }
             }
@@ -1300,10 +1300,30 @@ namespace DockBar
 
         internal void SetShowMascot(bool show)
         {
+            if (show && !IsMascotPositionSupported) show = false;
             showMascot = show;
             if (dockMascot != null) dockMascot.SetEnabled(show);
-            if (mascotMenuItem != null) mascotMenuItem.IsChecked = show;
+            if (mascotMenuItem != null)
+            {
+                mascotMenuItem.IsChecked = show;
+                mascotMenuItem.IsEnabled = IsMascotPositionSupported;
+            }
             SaveSettings();
+        }
+
+        private void EnforceMascotPositionPolicy()
+        {
+            bool supported = IsMascotPositionSupported;
+            bool disabledNow = !supported && showMascot;
+            if (disabledNow) showMascot = false;
+            if (dockMascot != null) dockMascot.SetEnabled(showMascot && supported);
+            if (mascotMenuItem != null)
+            {
+                mascotMenuItem.IsChecked = showMascot && supported;
+                mascotMenuItem.IsEnabled = supported;
+                mascotMenuItem.ToolTip = supported ? null : "O mascote está disponível somente com a Dock na borda inferior.";
+            }
+            if (disabledNow) SaveSettings();
         }
 
         internal void SetMascotType(string type)
@@ -1335,8 +1355,12 @@ namespace DockBar
         {
             if (display.Contains("Passear")) SetMascotMode("Wander");
             else if (display.Contains("CPU") || display.Contains("RunCat")) SetMascotMode("RunCat");
-            else if (display.Contains("Dormir") || display.Contains("Descansar")) SetMascotMode("Sleep");
             else SetMascotMode("PatrolRight");
+        }
+
+        internal void MascotTakeNap()
+        {
+            if (dockMascot != null) dockMascot.TakeNap();
         }
 
         internal void SetMascotScale(double scale)
@@ -1525,12 +1549,30 @@ namespace DockBar
             if (window == null) return;
             window.WindowStartupLocation = WindowStartupLocation.Manual;
             Rect area = SystemParameters.WorkArea;
-            double dockTop = RevealedDockTop();
-            double availableHeight = Math.Max(0, dockTop - area.Top - 18);
-            if (availableHeight < window.Height && availableHeight >= window.MinHeight)
-                window.Height = availableHeight;
-            window.Left = area.Left + Math.Max(8, (area.Width - window.Width) / 2);
-            window.Top = Math.Max(area.Top + 8, dockTop - window.Height - 10);
+            if (IsDockTop)
+            {
+                window.Left = area.Left + Math.Max(8, (area.Width - window.Width) / 2);
+                window.Top = Math.Min(area.Bottom - window.Height - 8, Top + ActualHeight + 10);
+            }
+            else if (IsDockLeft)
+            {
+                window.Left = Math.Min(area.Right - window.Width - 8, Left + ActualWidth + 10);
+                window.Top = area.Top + Math.Max(8, (area.Height - window.Height) / 2);
+            }
+            else if (IsDockRight)
+            {
+                window.Left = Math.Max(area.Left + 8, Left - window.Width - 10);
+                window.Top = area.Top + Math.Max(8, (area.Height - window.Height) / 2);
+            }
+            else
+            {
+                double dockTop = RevealedDockTop();
+                double availableHeight = Math.Max(0, dockTop - area.Top - 18);
+                if (availableHeight < window.Height && availableHeight >= window.MinHeight)
+                    window.Height = availableHeight;
+                window.Left = area.Left + Math.Max(8, (area.Width - window.Width) / 2);
+                window.Top = Math.Max(area.Top + 8, dockTop - window.Height - 10);
+            }
         }
 
         private void ApplyWindows11MenuStyle(ContextMenu menu)
@@ -1813,6 +1855,10 @@ namespace DockBar
             menu.Placement = PlacementMode.Custom;
             menu.CustomPopupPlacementCallback = delegate(Size popupSize, Size targetSize, Point offset)
             {
+                if (IsDockLeft)
+                    return new[] { new CustomPopupPlacement(new Point(targetSize.Width + 10, (targetSize.Height - popupSize.Height) / 2.0), PopupPrimaryAxis.Vertical) };
+                if (IsDockRight)
+                    return new[] { new CustomPopupPlacement(new Point(-popupSize.Width - 10, (targetSize.Height - popupSize.Height) / 2.0), PopupPrimaryAxis.Vertical) };
                 double left;
                 if (target != null && target != dockShell)
                 {
@@ -1829,10 +1875,8 @@ namespace DockBar
                 {
                     left = Math.Max(4, Math.Min(left, dockShell.ActualWidth - popupSize.Width - 4));
                 }
-                return new[]
-                {
-                    new CustomPopupPlacement(new Point(left, -popupSize.Height - 10), PopupPrimaryAxis.Horizontal)
-                };
+                double top = IsDockTop ? targetSize.Height + 10 : -popupSize.Height - 10;
+                return new[] { new CustomPopupPlacement(new Point(left, top), PopupPrimaryAxis.Horizontal) };
             };
             menu.Opened += delegate
             {
@@ -1848,6 +1892,11 @@ namespace DockBar
                 if (ReferenceEquals(activeContextMenu, menu)) activeContextMenu = null;
                 ScheduleAutoHide();
             };
+        }
+
+        internal void ConfigureMascotContextMenu(ContextMenu menu, FrameworkElement target)
+        {
+            ConfigureDockContextMenu(menu, target);
         }
 
         private void ScheduleDockContextMenuPosition(ContextMenu menu)
@@ -1887,22 +1936,41 @@ namespace DockBar
                 if (!GetCursorPos(out cursor)) cursor = new CursorPoint { X = (int)dockTop.X + width / 2, Y = (int)dockTop.Y };
 
                 int centerX = cursor.X;
+                int centerY = cursor.Y;
                 var target = menu.PlacementTarget as FrameworkElement;
-                if (target != null && target != dockShell && target.IsLoaded && target.ActualWidth > 0)
+                if (target != null && target != dockShell && target.IsLoaded && target.ActualWidth > 0 && target.ActualHeight > 0)
                 {
                     try
                     {
-                        Point targetScreen = target.PointToScreen(new Point(target.ActualWidth / 2.0, 0));
+                        Point targetScreen = target.PointToScreen(new Point(target.ActualWidth / 2.0, target.ActualHeight / 2.0));
                         centerX = (int)Math.Round(targetScreen.X);
+                        centerY = (int)Math.Round(targetScreen.Y);
                     }
                     catch { }
                 }
 
                 Forms.Screen screen = Forms.Screen.FromPoint(new Drawing.Point(cursor.X, cursor.Y));
-                int left = centerX - width / 2;
+                int left;
+                int top;
+                if (IsDockLeft)
+                {
+                    left = (int)Math.Round(dockTop.X + dockShell.ActualWidth + 10);
+                    top = centerY - height / 2;
+                }
+                else if (IsDockRight)
+                {
+                    left = (int)Math.Round(dockTop.X) - width - 10;
+                    top = centerY - height / 2;
+                }
+                else
+                {
+                    left = centerX - width / 2;
+                    top = IsDockTop
+                        ? (int)Math.Round(dockTop.Y + dockShell.ActualHeight + 10)
+                        : (int)Math.Round(dockTop.Y) - height - 10;
+                }
                 left = Math.Max(screen.Bounds.Left + 6, Math.Min(left, screen.Bounds.Right - width - 6));
-                int top = (int)Math.Round(dockTop.Y) - height - 10;
-                top = Math.Max(screen.Bounds.Top + 6, top);
+                top = Math.Max(screen.Bounds.Top + 6, Math.Min(top, screen.Bounds.Bottom - height - 6));
                 return SetWindowPos(source.Handle, new IntPtr(-1), left, top, 0, 0, 0x0001 | 0x0010);
             }
             catch { return false; }
@@ -2014,19 +2082,18 @@ namespace DockBar
                 else if (header == "Ocultar barra de tarefas original") item.IsChecked = taskbarHidden;
                 else if (header == "Exibir assistente") item.IsChecked = showAssistant;
                 else if (header == "Exibir widget na área de trabalho") item.IsChecked = showDesktopWidget;
-                else if (header == "Exibir mascote na barra") item.IsChecked = showMascot;
+                else if (header == "Exibir mascote na barra")
+                {
+                    item.IsChecked = showMascot && IsMascotPositionSupported;
+                    item.IsEnabled = IsMascotPositionSupported;
+                }
             }
         }
 
         private void ApplyDockSizing()
         {
             if (magnifyHost == null || dockShell == null) return;
-            StopDockWave();
-            double scale = dockIconSize / 48.0;
-            magnifyHost.LayoutTransform = new ScaleTransform(scale, scale);
-            dockShell.Height = Math.Max(62, 72 + (dockIconSize - 48) * 1.15);
-            Height = Math.Max(100, 118 + (dockIconSize - 48) * 1.45);
-            waveLayoutDirty = true;
+            ApplyDockOrientation();
             UpdateAppBarRegistration();
             SchedulePositionDock();
         }
@@ -2198,11 +2265,12 @@ namespace DockBar
                     HidePreview();
                     StopDockWave();
                     PrepareTaskTileDrag(stack);
-                    stack.Cursor = Cursors.SizeWE;
+                    stack.Cursor = IsVerticalDock ? Cursors.SizeNS : Cursors.SizeWE;
                     Mouse.Capture(stack, CaptureMode.SubTree);
                 }
-                MoveTaskTileToPointer(stack, current.X);
-                PositionDraggedTaskTile(stack, current.X);
+                double pointer = IsVerticalDock ? current.Y : current.X;
+                MoveTaskTileToPointer(stack, pointer);
+                PositionDraggedTaskTile(stack, pointer);
                 args.Handled = true;
             };
             stack.PreviewMouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs args)
@@ -2280,16 +2348,16 @@ namespace DockBar
             AddMagnify(button, 1.40);
             stack.Children.Add(button);
             Color tileAccent = app.GetAccentColor() ?? Color.FromRgb(25, 120, 225);
-            stack.Children.Add(new Border
+            var indicator = new Border
             {
                 Width = app.WindowHandles.Count > 0 ? runningIndicatorWidth : 0,
                 Height = app.WindowHandles.Count > 0 ? 4 : 0,
-                Margin = new Thickness(0, 3, 0, 0),
                 Background = new SolidColorBrush(tileAccent),
                 CornerRadius = new CornerRadius(1.5),
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Tag = "RunningIndicator"
-            });
+            };
+            PlaceRunningIndicator(stack, indicator);
             return stack;
         }
 
@@ -2303,7 +2371,7 @@ namespace DockBar
             return "path:" + target.ToLowerInvariant();
         }
 
-        private void MoveTaskTileToPointer(FrameworkElement dragged, double pointerX)
+        private void MoveTaskTileToPointer(FrameworkElement dragged, double pointer)
         {
             if (dragged == null || taskItems == null || !taskItems.Children.Contains(dragged)) return;
             int insertIndex = 0;
@@ -2311,8 +2379,8 @@ namespace DockBar
             {
                 if (element == dragged) continue;
                 Vector offset = VisualTreeHelper.GetOffset(element);
-                double center = offset.X + element.ActualWidth / 2;
-                if (pointerX >= center) insertIndex++;
+                double center = IsVerticalDock ? offset.Y + element.ActualHeight / 2 : offset.X + element.ActualWidth / 2;
+                if (pointer >= center) insertIndex++;
             }
 
             int oldIndex = taskItems.Children.IndexOf(dragged);
@@ -2321,7 +2389,10 @@ namespace DockBar
             foreach (FrameworkElement element in taskItems.Children.OfType<FrameworkElement>())
             {
                 if (element != dragged)
-                    oldPositions[element] = element.TranslatePoint(new Point(0, 0), taskItems).X;
+                {
+                    Point position = element.TranslatePoint(new Point(0, 0), taskItems);
+                    oldPositions[element] = IsVerticalDock ? position.Y : position.X;
+                }
             }
             taskItems.Children.Remove(dragged);
             insertIndex = Math.Max(0, Math.Min(insertIndex, taskItems.Children.Count));
@@ -2329,8 +2400,9 @@ namespace DockBar
             taskItems.UpdateLayout();
             foreach (var item in oldPositions)
             {
-                double newX = item.Key.TranslatePoint(new Point(0, 0), taskItems).X;
-                double delta = item.Value - newX;
+                Point newPosition = item.Key.TranslatePoint(new Point(0, 0), taskItems);
+                double newCoordinate = IsVerticalDock ? newPosition.Y : newPosition.X;
+                double delta = item.Value - newCoordinate;
                 if (Math.Abs(delta) < .5) continue;
                 var translate = item.Key.RenderTransform as TranslateTransform;
                 if (translate == null)
@@ -2338,9 +2410,10 @@ namespace DockBar
                     translate = new TranslateTransform();
                     item.Key.RenderTransform = translate;
                 }
-                translate.BeginAnimation(TranslateTransform.XProperty, null);
-                translate.X = 0;
-                translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(delta, 0, TimeSpan.FromMilliseconds(145))
+                DependencyProperty property = IsVerticalDock ? TranslateTransform.YProperty : TranslateTransform.XProperty;
+                translate.BeginAnimation(property, null);
+                if (IsVerticalDock) translate.Y = 0; else translate.X = 0;
+                translate.BeginAnimation(property, new DoubleAnimation(delta, 0, TimeSpan.FromMilliseconds(145))
                 {
                     EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
                     FillBehavior = FillBehavior.Stop
@@ -2361,25 +2434,28 @@ namespace DockBar
                     element.RenderTransform = translate;
                 }
                 translate.BeginAnimation(TranslateTransform.XProperty, null);
+                translate.BeginAnimation(TranslateTransform.YProperty, null);
                 translate.X = 0;
+                translate.Y = 0;
             }
             dragged.Opacity = .96;
             Panel.SetZIndex(dragged, 1000);
         }
 
-        private void PositionDraggedTaskTile(FrameworkElement dragged, double pointerX)
+        private void PositionDraggedTaskTile(FrameworkElement dragged, double pointer)
         {
             if (dragged == null || taskItems == null) return;
             Vector offset = VisualTreeHelper.GetOffset(dragged);
-            double center = offset.X + dragged.ActualWidth / 2;
+            double center = IsVerticalDock ? offset.Y + dragged.ActualHeight / 2 : offset.X + dragged.ActualWidth / 2;
             var translate = dragged.RenderTransform as TranslateTransform;
             if (translate == null)
             {
                 translate = new TranslateTransform();
                 dragged.RenderTransform = translate;
             }
-            translate.BeginAnimation(TranslateTransform.XProperty, null);
-            translate.X = pointerX - center;
+            DependencyProperty property = IsVerticalDock ? TranslateTransform.YProperty : TranslateTransform.XProperty;
+            translate.BeginAnimation(property, null);
+            if (IsVerticalDock) translate.Y = pointer - center; else translate.X = pointer - center;
         }
 
         private void FinishTaskTileDrag(FrameworkElement dragged)
@@ -2389,10 +2465,11 @@ namespace DockBar
             Panel.SetZIndex(dragged, 0);
             var translate = dragged.RenderTransform as TranslateTransform;
             if (translate == null) return;
-            double start = translate.X;
-            translate.BeginAnimation(TranslateTransform.XProperty, null);
-            translate.X = 0;
-            translate.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(start, 0, TimeSpan.FromMilliseconds(120))
+            DependencyProperty property = IsVerticalDock ? TranslateTransform.YProperty : TranslateTransform.XProperty;
+            double start = IsVerticalDock ? translate.Y : translate.X;
+            translate.BeginAnimation(property, null);
+            if (IsVerticalDock) translate.Y = 0; else translate.X = 0;
+            translate.BeginAnimation(property, new DoubleAnimation(start, 0, TimeSpan.FromMilliseconds(120))
             {
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
                 FillBehavior = FillBehavior.Stop
@@ -2969,7 +3046,11 @@ namespace DockBar
             HidePreviewWindowOnly();
             Size screenArea = GetScreenWorkArea(pendingPreviewAnchor);
             Color? accent = pendingPreview.GetAccentColor();
-            previewWindow = new PreviewWindow(pendingPreview.WindowHandles, pendingPreview.WindowTitles, pendingPreview.Name, screenArea, accent);
+            PreviewDockSide previewSide = IsDockLeft ? PreviewDockSide.Left
+                : IsDockRight ? PreviewDockSide.Right
+                : IsDockTop ? PreviewDockSide.Top
+                : PreviewDockSide.Bottom;
+            previewWindow = new PreviewWindow(pendingPreview.WindowHandles, pendingPreview.WindowTitles, pendingPreview.Name, screenArea, previewSide, accent);
             PreviewWindow openedPreview = previewWindow;
             activePreviewKey = key;
             openedPreview.Closed += delegate
@@ -2989,15 +3070,26 @@ namespace DockBar
             previewWindow.MouseEnter += delegate { previewHideTimer.Stop(); };
             previewWindow.MouseLeave += delegate { SchedulePreviewHide(); };
 
-            Point screenPoint = activePreviewAnchor.PointToScreen(new Point(activePreviewAnchor.ActualWidth / 2, 0));
+            Point localAnchor = IsDockLeft
+                ? new Point(activePreviewAnchor.ActualWidth, activePreviewAnchor.ActualHeight / 2.0)
+                : IsDockRight
+                    ? new Point(0, activePreviewAnchor.ActualHeight / 2.0)
+                    : IsDockTop
+                        ? new Point(activePreviewAnchor.ActualWidth / 2.0, activePreviewAnchor.ActualHeight)
+                        : new Point(activePreviewAnchor.ActualWidth / 2.0, 0);
+            Point screenPoint = activePreviewAnchor.PointToScreen(localAnchor);
             var source = PresentationSource.FromVisual(this);
             if (source != null && source.CompositionTarget != null)
                 screenPoint = source.CompositionTarget.TransformFromDevice.Transform(screenPoint);
 
-            double left = screenPoint.X - previewWindow.Width / 2;
-            double top = screenPoint.Y - previewWindow.Height - 7;
+            double left = IsDockLeft ? screenPoint.X + 7
+                : IsDockRight ? screenPoint.X - previewWindow.Width - 7
+                : screenPoint.X - previewWindow.Width / 2;
+            double top = IsDockTop ? screenPoint.Y + 7
+                : IsDockBottom ? screenPoint.Y - previewWindow.Height - 7
+                : screenPoint.Y - previewWindow.Height / 2;
             previewWindow.Left = Math.Max(SystemParameters.VirtualScreenLeft + 6, Math.Min(left, SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - previewWindow.Width - 6));
-            previewWindow.Top = Math.Max(SystemParameters.VirtualScreenTop + 6, top);
+            previewWindow.Top = Math.Max(SystemParameters.VirtualScreenTop + 6, Math.Min(top, SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - previewWindow.Height - 6));
             previewWindow.Show();
             previewLastLeft = Int32.MinValue;
             previewLastTop = Int32.MinValue;
@@ -3013,8 +3105,14 @@ namespace DockBar
                 // PointToScreen já inclui ScaleTransform e TranslateTransform da
                 // onda. SetWindowPos move só a janela nativa, sem recalcular o
                 // layout WPF da prévia em cada frame.
-                Point anchor = activePreviewAnchor.PointToScreen(
-                    new Point(activePreviewAnchor.ActualWidth / 2, 0));
+                Point localAnchor = IsDockLeft
+                    ? new Point(activePreviewAnchor.ActualWidth, activePreviewAnchor.ActualHeight / 2.0)
+                    : IsDockRight
+                        ? new Point(0, activePreviewAnchor.ActualHeight / 2.0)
+                        : IsDockTop
+                            ? new Point(activePreviewAnchor.ActualWidth / 2.0, activePreviewAnchor.ActualHeight)
+                            : new Point(activePreviewAnchor.ActualWidth / 2.0, 0);
+                Point anchor = activePreviewAnchor.PointToScreen(localAnchor);
                 var source = PresentationSource.FromVisual(this);
                 double dpiX = 1;
                 double dpiY = 1;
@@ -3028,11 +3126,20 @@ namespace DockBar
                 int height = Math.Max(1, (int)Math.Round(previewWindow.Height * dpiY));
                 Forms.Screen screen = Forms.Screen.FromPoint(
                     new Drawing.Point((int)Math.Round(anchor.X), (int)Math.Round(anchor.Y)));
-                int previewLeft = (int)Math.Round(anchor.X - width / 2.0);
-                int previewTop = (int)Math.Round(anchor.Y - height - 7 * dpiY);
+                int previewLeft = IsDockLeft
+                    ? (int)Math.Round(anchor.X + 7 * dpiX)
+                    : IsDockRight
+                        ? (int)Math.Round(anchor.X - width - 7 * dpiX)
+                        : (int)Math.Round(anchor.X - width / 2.0);
+                int previewTop = IsDockTop
+                    ? (int)Math.Round(anchor.Y + 7 * dpiY)
+                    : IsDockBottom
+                        ? (int)Math.Round(anchor.Y - height - 7 * dpiY)
+                        : (int)Math.Round(anchor.Y - height / 2.0);
                 previewLeft = Math.Max(screen.WorkingArea.Left + 6,
                     Math.Min(previewLeft, screen.WorkingArea.Right - width - 6));
-                previewTop = Math.Max(screen.WorkingArea.Top + 6, previewTop);
+                previewTop = Math.Max(screen.WorkingArea.Top + 6,
+                    Math.Min(previewTop, screen.WorkingArea.Bottom - height - 6));
                 if (previewLeft == previewLastLeft && previewTop == previewLastTop) return;
 
                 IntPtr handle = new WindowInteropHelper(previewWindow).Handle;
@@ -3112,14 +3219,13 @@ namespace DockBar
             {
                 Width = runningIndicatorWidth,
                 Height = 4,
-                Margin = new Thickness(0, 3, 0, 0),
                 Background = new SolidColorBrush(Color.FromRgb(25, 120, 225)),
                 CornerRadius = new CornerRadius(1.5),
                 Visibility = Visibility.Hidden,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 Tag = "RunningIndicator"
             };
-            stack.Children.Add(dot);
+            PlaceRunningIndicator(stack, dot);
             if (!String.IsNullOrWhiteSpace(processName)) runningDots[processName] = dot;
             return stack;
         }
@@ -3222,10 +3328,12 @@ namespace DockBar
                 RenderTransformOrigin = new Point(.5, 1),
                 RenderTransform = new ScaleTransform(1, 1)
             };
+            systemCardGrid = grid;
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(72) });
             grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(78) });
 
             var clockStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Center, Cursor = Cursors.Hand };
+            systemClockStack = clockStack;
             clockText = new TextBlock { FontFamily = new FontFamily("Segoe UI"), FontSize = 16, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center, LineHeight = 17, ToolTip = null };
             clockDateText = new TextBlock { FontFamily = new FontFamily("Segoe UI"), FontSize = 10.5, FontWeight = FontWeights.Normal, Foreground = Brushes.White, Opacity = .82, HorizontalAlignment = HorizontalAlignment.Center, TextAlignment = TextAlignment.Center, Margin = new Thickness(0, 1, 0, 0), ToolTip = null };
             clockStack.ToolTip = CreateNameToolTip("Data e hora", clockStack);
@@ -3238,6 +3346,7 @@ namespace DockBar
             grid.Children.Add(clockStack);
 
             var tray = new Grid { Width = 72, Height = 54, VerticalAlignment = VerticalAlignment.Center };
+            systemTrayGrid = tray;
             tray.RowDefinitions.Add(new RowDefinition());
             tray.RowDefinitions.Add(new RowDefinition());
             tray.ColumnDefinitions.Add(new ColumnDefinition());
@@ -3311,6 +3420,10 @@ namespace DockBar
 
         private void AddMagnify(FrameworkElement element, double scale = 1.38, bool spreadNeighbors = true)
         {
+            element.RenderTransformOrigin = IsDockLeft ? new Point(0, .5)
+                : IsDockRight ? new Point(1, .5)
+                : IsDockTop ? new Point(.5, 0)
+                : new Point(.5, 1);
             if (spreadNeighbors)
             {
                 if (!magnifyIcons.Contains(element)) magnifyIcons.Add(element);
@@ -3388,7 +3501,8 @@ namespace DockBar
                 ? 1.0 / 60.0
                 : Math.Min(.05, (current - lastWaveFrame).TotalSeconds);
             lastWaveFrame = current;
-            UpdateDockWave(magnifyHost, Mouse.GetPosition(magnifyHost).X, elapsed);
+            Point pointer = Mouse.GetPosition(magnifyHost);
+            UpdateDockWave(magnifyHost, IsVerticalDock ? pointer.Y : pointer.X, elapsed);
             RepositionOpenPreview();
             // Reancorar um Popup pode disparar layout nativo. Trinta atualizações
             // por segundo são suficientes para o rótulo acompanhar sem roubar
@@ -3417,6 +3531,7 @@ namespace DockBar
 
         private void RebuildWaveLayout(FrameworkElement dockRow)
         {
+            bool vertical = IsVerticalDock;
             magnifyIcons.RemoveAll(delegate(FrameworkElement item)
             {
                 if (item.IsLoaded) return false;
@@ -3437,8 +3552,10 @@ namespace DockBar
                 if (container == null || !container.IsVisible || !icon.IsVisible) continue;
                 var translate = container.RenderTransform as TranslateTransform;
                 var scaleTransform = icon.RenderTransform as ScaleTransform;
+                Border indicator = FindRunningIndicator(container);
+                var indicatorTranslate = indicator == null ? null : indicator.RenderTransform as TranslateTransform;
                 double currentScale = scaleTransform == null ? 1 : scaleTransform.ScaleX;
-                double currentOffset = translate == null ? 0 : translate.X;
+                double currentOffset = translate == null ? 0 : (vertical ? translate.Y : translate.X);
                 if (scaleTransform != null)
                 {
                     scaleTransform.BeginAnimation(ScaleTransform.ScaleXProperty, null);
@@ -3453,13 +3570,20 @@ namespace DockBar
                 }
                 else
                 {
-                    translate.BeginAnimation(TranslateTransform.XProperty, null);
-                    translate.X = currentOffset;
+                    translate.BeginAnimation(vertical ? TranslateTransform.YProperty : TranslateTransform.XProperty, null);
+                    if (vertical) translate.Y = currentOffset; else translate.X = currentOffset;
+                }
+                if (indicatorTranslate != null)
+                {
+                    double currentIndicatorOffset = indicatorTranslate.X;
+                    indicatorTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+                    indicatorTranslate.X = currentIndicatorOffset;
                 }
                 double center;
                 try
                 {
-                    center = icon.TranslatePoint(new Point(icon.ActualWidth / 2, 0), dockRow).X;
+                    Point iconCenter = icon.TranslatePoint(new Point(icon.ActualWidth / 2, icon.ActualHeight / 2), dockRow);
+                    center = vertical ? iconCenter.Y : iconCenter.X;
                     center -= currentOffset;
                 }
                 catch { continue; }
@@ -3469,10 +3593,11 @@ namespace DockBar
                 {
                     Icon = icon,
                     Container = container,
+                    Indicator = indicator,
                     Center = center,
                     Scale = currentScale,
                     Growth = growth,
-                    ExtraWidth = icon.ActualWidth * (currentScale - 1),
+                    ExtraWidth = (vertical ? icon.ActualHeight : icon.ActualWidth) * (currentScale - 1),
                     Influence = 0,
                     Offset = currentOffset,
                     ZIndex = Panel.GetZIndex(container)
@@ -3483,7 +3608,7 @@ namespace DockBar
             {
                 if (!passive.IsVisible) continue;
                 var translate = passive.RenderTransform as TranslateTransform;
-                double currentOffset = translate == null ? 0 : translate.X;
+                double currentOffset = translate == null ? 0 : (vertical ? translate.Y : translate.X);
                 if (translate == null)
                 {
                     translate = new TranslateTransform();
@@ -3491,13 +3616,14 @@ namespace DockBar
                 }
                 else
                 {
-                    translate.BeginAnimation(TranslateTransform.XProperty, null);
-                    translate.X = currentOffset;
+                    translate.BeginAnimation(vertical ? TranslateTransform.YProperty : TranslateTransform.XProperty, null);
+                    if (vertical) translate.Y = currentOffset; else translate.X = currentOffset;
                 }
                 double center;
                 try
                 {
-                    center = passive.TranslatePoint(new Point(passive.ActualWidth / 2, 0), dockRow).X;
+                    Point passiveCenter = passive.TranslatePoint(new Point(passive.ActualWidth / 2, passive.ActualHeight / 2), dockRow);
+                    center = vertical ? passiveCenter.Y : passiveCenter.X;
                     center -= currentOffset;
                 }
                 catch { continue; }
@@ -3521,9 +3647,10 @@ namespace DockBar
             waveLayoutDirty = false;
         }
 
-        private void UpdateDockWave(FrameworkElement dockRow, double pointerX, double elapsed)
+        private void UpdateDockWave(FrameworkElement dockRow, double pointerAxis, double elapsed)
         {
             if (waveLayoutDirty) RebuildWaveLayout(dockRow);
+            bool vertical = IsVerticalDock;
             const double radius = 142;
             double scaleBlend = 1 - Math.Exp(-26 * elapsed);
             double offsetBlend = 1 - Math.Exp(-31 * elapsed);
@@ -3536,7 +3663,7 @@ namespace DockBar
                 WaveSample sample = waveSamples[index];
                 if (sample.Icon != null)
                 {
-                    double distance = Math.Abs(sample.Center - pointerX);
+                    double distance = Math.Abs(sample.Center - pointerAxis);
                     if (distance < closestDistance)
                     {
                         closestDistance = distance;
@@ -3545,7 +3672,7 @@ namespace DockBar
                     sample.Influence = distance >= radius ? 0 : (Math.Cos(Math.PI * distance / radius) + 1) / 2;
                     double targetScale = 1 + sample.Growth * sample.Influence;
                     sample.Scale += (targetScale - sample.Scale) * scaleBlend;
-                    sample.ExtraWidth = sample.Icon.ActualWidth * (sample.Scale - 1);
+                    sample.ExtraWidth = (vertical ? sample.Icon.ActualHeight : sample.Icon.ActualWidth) * (sample.Scale - 1);
                 }
                 totalExtra += sample.ExtraWidth;
                 waveSamples[index] = sample;
@@ -3576,6 +3703,20 @@ namespace DockBar
                         scaleTransform.ScaleX = sample.Scale;
                         scaleTransform.ScaleY = sample.Scale;
                     }
+                    if (sample.Indicator != null)
+                    {
+                        var indicatorTranslate = sample.Indicator.RenderTransform as TranslateTransform;
+                        if (indicatorTranslate == null)
+                        {
+                            indicatorTranslate = new TranslateTransform();
+                            sample.Indicator.RenderTransform = indicatorTranslate;
+                        }
+                        double indicatorOffset = vertical
+                            ? (IsDockLeft ? 1 : -1) * sample.Icon.ActualWidth * (sample.Scale - 1) / 2.0
+                            : 0;
+                        if (Math.Abs(indicatorTranslate.X - indicatorOffset) > .0001)
+                            indicatorTranslate.X = indicatorOffset;
+                    }
                 }
 
                 var translate = sample.Container.RenderTransform as TranslateTransform;
@@ -3586,7 +3727,11 @@ namespace DockBar
                 }
                 double targetOffset = consumedExtra + sample.ExtraWidth / 2 - totalExtra / 2;
                 sample.Offset += (targetOffset - sample.Offset) * offsetBlend;
-                if (Math.Abs(translate.X - sample.Offset) > .0001) translate.X = sample.Offset;
+                double currentOffset = vertical ? translate.Y : translate.X;
+                if (Math.Abs(currentOffset - sample.Offset) > .0001)
+                {
+                    if (vertical) translate.Y = sample.Offset; else translate.X = sample.Offset;
+                }
                 consumedExtra += sample.ExtraWidth;
                 waveSamples[index] = sample;
             }
@@ -3594,6 +3739,7 @@ namespace DockBar
 
         private void ResetDockWave()
         {
+            bool vertical = IsVerticalDock;
             if (waveTopContainer != null)
             {
                 Panel.SetZIndex(waveTopContainer, 0);
@@ -3608,7 +3754,15 @@ namespace DockBar
                 if (translate != null)
                 {
                     var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(165)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                    translate.BeginAnimation(TranslateTransform.XProperty, animation);
+                    translate.BeginAnimation(vertical ? TranslateTransform.YProperty : TranslateTransform.XProperty, animation);
+                    if (vertical) translate.X = 0; else translate.Y = 0;
+                }
+                Border indicator = FindRunningIndicator(container);
+                var indicatorTranslate = indicator == null ? null : indicator.RenderTransform as TranslateTransform;
+                if (indicatorTranslate != null)
+                {
+                    var indicatorAnimation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(165)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
+                    indicatorTranslate.BeginAnimation(TranslateTransform.XProperty, indicatorAnimation);
                 }
                 Panel.SetZIndex(container, 0);
             }
@@ -3617,8 +3771,28 @@ namespace DockBar
                 var translate = passive.RenderTransform as TranslateTransform;
                 if (translate == null) continue;
                 var animation = new DoubleAnimation(0, TimeSpan.FromMilliseconds(165)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } };
-                translate.BeginAnimation(TranslateTransform.XProperty, animation);
+                translate.BeginAnimation(vertical ? TranslateTransform.YProperty : TranslateTransform.XProperty, animation);
+                if (vertical) translate.X = 0; else translate.Y = 0;
             }
+        }
+
+        private static Border FindRunningIndicator(FrameworkElement container)
+        {
+            var panel = container as Panel;
+            if (panel == null) return null;
+            return panel.Children.OfType<Border>().FirstOrDefault(delegate(Border item)
+            {
+                return String.Equals(item.Tag as string, "RunningIndicator", StringComparison.Ordinal);
+            });
+        }
+
+        private void PlaceRunningIndicator(StackPanel stack, Border indicator)
+        {
+            if (stack == null || indicator == null) return;
+            if (stack.Children.Contains(indicator)) stack.Children.Remove(indicator);
+            indicator.Margin = IsDockTop ? new Thickness(0, 0, 0, 3) : new Thickness(0, 3, 0, 0);
+            if (IsDockTop) stack.Children.Insert(0, indicator);
+            else stack.Children.Add(indicator);
         }
 
         private static ToolTip CreateNameToolTip(string name, FrameworkElement target)
@@ -5416,10 +5590,15 @@ namespace DockBar
                 }
                 return;
             }
-            int revealLine = taskbarHidden ? screen.Bounds.Bottom : screen.WorkingArea.Bottom;
+            Drawing.Rectangle bounds = taskbarHidden ? screen.Bounds : screen.WorkingArea;
+            int revealLine = IsDockTop ? bounds.Top
+                : IsDockLeft ? bounds.Left
+                : IsDockRight ? bounds.Right
+                : bounds.Bottom;
+            int cursorCoordinate = IsVerticalDock ? cursor.X : cursor.Y;
             if (dockAutoHidden)
             {
-                if (cursor.Y < revealLine - 3 || cursor.Y > revealLine + 2) return;
+                if (cursorCoordinate < revealLine - 3 || cursorCoordinate > revealLine + 3) return;
                 ShowDockAnimated();
                 edgeRevealPending = true;
                 // ShowDockAnimated interrompe o polling normal; durante uma
@@ -5435,7 +5614,7 @@ namespace DockBar
                 edgeRevealTimer.Stop();
                 return;
             }
-            if (cursor.Y < revealLine - 9 || cursor.Y > revealLine + 3)
+            if (cursorCoordinate < revealLine - 9 || cursorCoordinate > revealLine + 9)
             {
                 edgeRevealPending = false;
                 edgeRevealTimer.Stop();
@@ -5443,35 +5622,14 @@ namespace DockBar
             }
         }
 
-        private double DockBaseBottom()
-        {
-            if (appBarRegistered && !appBarArea.IsEmpty) return appBarArea.Bottom;
-            var area = taskbarHidden ? new Rect(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight) : SystemParameters.WorkArea;
-            return area.Bottom;
-        }
-
-        private double DockBottom()
-        {
-            return DockBaseBottom() - dockBottomGap;
-        }
-
         private double HiddenDockTop()
         {
-            // Mantém uma pequena faixa da borda real do dockShell visível. Deixar
-            // apenas o topo da Window exposto não funciona porque essa área é
-            // totalmente transparente e o Windows a trata como click-through.
-            double shellHeight = dockShell == null || dockShell.ActualHeight <= 0 ? 72 : dockShell.ActualHeight;
-            double shellBottomMargin = dockShell == null ? 5 : dockShell.Margin.Bottom;
-            double shellTopInsideWindow = Math.Max(0, ActualHeight - shellBottomMargin - shellHeight);
-            // Quando oculta, a faixa de ativação continua na borda física da
-            // tela; o espaçamento configurado vale somente para a Dock aberta.
-            return DockBaseBottom() - shellTopInsideWindow - 7;
+            return HiddenDockTopForPosition();
         }
 
         private double RevealedDockTop()
         {
-            double shellBottomMargin = dockShell == null ? 5 : dockShell.Margin.Bottom;
-            return DockBottom() - ActualHeight + shellBottomMargin;
+            return RevealedDockTopForPosition();
         }
 
         private void ShowDockAnimated()
@@ -5479,19 +5637,22 @@ namespace DockBar
             if (fullscreenSuppressed || !IsLoaded) return;
             edgeRevealTimer.Stop();
             autoHideTimer.Stop();
-            double target = RevealedDockTop();
-            if (!dockAutoHidden && Math.Abs(Top - target) < .5) return;
+            double targetLeft = RevealedDockLeft();
+            double targetTop = RevealedDockTopForPosition();
+            if (!dockAutoHidden && Math.Abs(Left - targetLeft) < .5 && Math.Abs(Top - targetTop) < .5) return;
             // Uma Window quase toda fora da tela pode ser temporariamente
             // desacelerada pelo DWM. Trazemos a janela de volta imediatamente e
             // animamos somente o conteúdo, evitando atraso no primeiro quadro.
+            BeginAnimation(LeftProperty, null);
             BeginAnimation(TopProperty, null);
-            Top = target;
-            AnimateDockRevealElement(dockShell);
-            AnimateDockRevealElement(magnifyHost);
+            Left = targetLeft;
+            Top = targetTop;
+            AnimateDockRevealElement(dockShell, IsDockLeft ? -10 : IsDockRight ? 10 : 0, IsDockTop ? -10 : IsDockBottom ? 10 : 0);
+            AnimateDockRevealElement(magnifyHost, IsDockLeft ? -10 : IsDockRight ? 10 : 0, IsDockTop ? -10 : IsDockBottom ? 10 : 0);
             dockAutoHidden = false;
         }
 
-        private static void AnimateDockRevealElement(FrameworkElement element)
+        private static void AnimateDockRevealElement(FrameworkElement element, double fromX, double fromY)
         {
             if (element == null) return;
             var translate = element.RenderTransform as TranslateTransform;
@@ -5500,29 +5661,39 @@ namespace DockBar
                 translate = new TranslateTransform();
                 element.RenderTransform = translate;
             }
+            translate.BeginAnimation(TranslateTransform.XProperty, null);
             translate.BeginAnimation(TranslateTransform.YProperty, null);
+            translate.X = 0;
             translate.Y = 0;
-            var animation = new DoubleAnimation(10, 0, TimeSpan.FromMilliseconds(115))
+            var animationX = new DoubleAnimation(fromX, 0, TimeSpan.FromMilliseconds(115))
             {
                 FillBehavior = FillBehavior.Stop,
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
             };
-            translate.BeginAnimation(TranslateTransform.YProperty, animation);
+            var animationY = new DoubleAnimation(fromY, 0, TimeSpan.FromMilliseconds(115))
+            {
+                FillBehavior = FillBehavior.Stop,
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+            };
+            if (Math.Abs(fromX) > .01) translate.BeginAnimation(TranslateTransform.XProperty, animationX);
+            if (Math.Abs(fromY) > .01) translate.BeginAnimation(TranslateTransform.YProperty, animationY);
         }
 
         private void HideDockAnimated()
         {
             if (fullscreenSuppressed || dockAutoHidden || !IsLoaded || IsAnyContextMenuOpen()) return;
-            double target = HiddenDockTop();
-            double start = Top;
-            BeginAnimation(TopProperty, null);
-            Top = target;
+            bool vertical = IsVerticalDock;
+            double target = vertical ? HiddenDockLeft() : HiddenDockTopForPosition();
+            double start = vertical ? Left : Top;
+            DependencyProperty positionProperty = vertical ? LeftProperty : TopProperty;
+            BeginAnimation(positionProperty, null);
+            if (vertical) Left = target; else Top = target;
             var animation = new DoubleAnimation(start, target, TimeSpan.FromMilliseconds(220))
             {
                 FillBehavior = FillBehavior.Stop,
                 EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut }
             };
-            BeginAnimation(TopProperty, animation);
+            BeginAnimation(positionProperty, animation);
             dockAutoHidden = true;
             edgeRevealPending = false;
             if (autoHideEnabled) edgeRevealTimer.Start();
@@ -5755,21 +5926,32 @@ namespace DockBar
         {
             if (!appBarRegistered || fullscreenSuppressed) return;
             var screen = Forms.Screen.PrimaryScreen.Bounds;
+            double dpiX = 1;
             double dpiY = 1;
             var presentation = PresentationSource.FromVisual(this);
             if (presentation != null && presentation.CompositionTarget != null)
+            {
+                dpiX = presentation.CompositionTarget.TransformToDevice.M11;
                 dpiY = presentation.CompositionTarget.TransformToDevice.M22;
-            double visualHeight = dockShell == null || dockShell.ActualHeight <= 0 ? 72 : dockShell.ActualHeight;
-            int requestedHeight = Math.Max(72, (int)Math.Round((visualHeight + dockBottomGap + 6) * dpiY));
+            }
+            double visualThickness = IsVerticalDock
+                ? (dockShell == null || dockShell.ActualWidth <= 0 ? 72 : dockShell.ActualWidth)
+                : (dockShell == null || dockShell.ActualHeight <= 0 ? 72 : dockShell.ActualHeight);
+            double dpi = IsVerticalDock ? dpiX : dpiY;
+            int requestedThickness = Math.Max(72, (int)Math.Round((visualThickness + dockBottomGap + 6) * dpi));
+            uint edge = IsDockLeft ? 0u : IsDockTop ? 1u : IsDockRight ? 2u : 3u;
             var data = new AppBarData
             {
                 Size = Marshal.SizeOf(typeof(AppBarData)),
                 Window = dockHandle,
-                Edge = 3,
-                Rectangle = new NativeRect { Left = screen.Left, Right = screen.Right, Bottom = screen.Bottom, Top = screen.Bottom - requestedHeight }
+                Edge = edge,
+                Rectangle = new NativeRect { Left = screen.Left, Right = screen.Right, Top = screen.Top, Bottom = screen.Bottom }
             };
             SHAppBarMessage(2, ref data);
-            data.Rectangle.Top = data.Rectangle.Bottom - requestedHeight;
+            if (IsDockLeft) data.Rectangle.Right = data.Rectangle.Left + requestedThickness;
+            else if (IsDockRight) data.Rectangle.Left = data.Rectangle.Right - requestedThickness;
+            else if (IsDockTop) data.Rectangle.Bottom = data.Rectangle.Top + requestedThickness;
+            else data.Rectangle.Top = data.Rectangle.Bottom - requestedThickness;
             SHAppBarMessage(3, ref data);
 
             Point topLeft = new Point(data.Rectangle.Left, data.Rectangle.Top);
@@ -5794,13 +5976,14 @@ namespace DockBar
 
         private void PositionDock()
         {
-            var area = taskbarHidden ? new Rect(0, 0, SystemParameters.PrimaryScreenWidth, SystemParameters.PrimaryScreenHeight) : SystemParameters.WorkArea;
             double dockWidth = ActualWidth;
             double dockHeight = ActualHeight;
             if (dockWidth <= 0 || dockHeight <= 0 || Double.IsNaN(dockWidth) || Double.IsNaN(dockHeight)) return;
-            Left = area.Left + Math.Max(0, (area.Width - dockWidth) / 2);
-            double targetTop = dockAutoHidden && autoHideEnabled ? HiddenDockTop() : RevealedDockTop();
+            double targetLeft = dockAutoHidden && autoHideEnabled ? HiddenDockLeft() : RevealedDockLeft();
+            double targetTop = dockAutoHidden && autoHideEnabled ? HiddenDockTopForPosition() : RevealedDockTopForPosition();
+            BeginAnimation(LeftProperty, null);
             BeginAnimation(TopProperty, null);
+            Left = targetLeft;
             Top = targetTop;
         }
 
@@ -6050,6 +6233,15 @@ namespace DockBar
 
         private void PrepareStartMenuPositioning()
         {
+            // O Windows só oferece uma âncora inferior nativa para o menu
+            // Iniciar. Nas demais bordas, deixe o Shell escolher a posição
+            // para não deslocar uma janela do sistema para fora da tela.
+            if (!IsDockBottom)
+            {
+                ReleaseStartMenuHook();
+                return;
+            }
+
             try
             {
                 Point bar = dockShell.PointToScreen(new Point(0, 0));
@@ -6111,6 +6303,8 @@ namespace DockBar
 
         private bool PositionStartMenuWindow(IntPtr window)
         {
+            if (!IsDockBottom) return false;
+
             NativeRect bounds;
             if (!GetWindowRect(window, out bounds)) return false;
             int width = bounds.Right - bounds.Left;
@@ -6126,6 +6320,8 @@ namespace DockBar
 
         private void ScheduleStartMenuPositioning()
         {
+            if (!IsDockBottom) return;
+
             int attempts = 0;
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(12) };
             timer.Tick += delegate
@@ -6207,23 +6403,36 @@ namespace DockBar
         {
             try
             {
-                Point anchorPoint = anchor.PointToScreen(new Point(anchor.ActualWidth / 2, 0));
+                Point anchorPoint = anchor.PointToScreen(new Point(anchor.ActualWidth / 2, anchor.ActualHeight / 2));
                 Point barPoint = dockShell.PointToScreen(new Point(0, 0));
+                Point barBottomRight = dockShell.PointToScreen(new Point(dockShell.ActualWidth, dockShell.ActualHeight));
                 var reveal = dockShell.RenderTransform as TranslateTransform;
-                if (reveal != null && Math.Abs(reveal.Y) > .01)
+                if (reveal != null && (Math.Abs(reveal.X) > .01 || Math.Abs(reveal.Y) > .01))
                 {
+                    double dpiX = 1;
                     double dpiY = 1;
                     PresentationSource source = PresentationSource.FromVisual(this);
                     if (source != null && source.CompositionTarget != null)
+                    {
+                        dpiX = source.CompositionTarget.TransformToDevice.M11;
                         dpiY = source.CompositionTarget.TransformToDevice.M22;
+                    }
+                    barPoint.X -= reveal.X * dpiX;
                     barPoint.Y -= reveal.Y * dpiY;
+                    barBottomRight.X -= reveal.X * dpiX;
+                    barBottomRight.Y -= reveal.Y * dpiY;
                 }
                 Forms.Screen screen = Forms.Screen.FromPoint(new Drawing.Point((int)Math.Round(anchorPoint.X), (int)Math.Round(anchorPoint.Y)));
                 quickSettingsAnchorX = (int)Math.Round(anchorPoint.X);
+                quickSettingsAnchorY = (int)Math.Round(anchorPoint.Y);
+                quickSettingsBarLeft = (int)Math.Round(barPoint.X);
                 quickSettingsBarTop = (int)Math.Round(barPoint.Y);
+                quickSettingsBarRight = (int)Math.Round(barBottomRight.X);
+                quickSettingsBarBottom = (int)Math.Round(barBottomRight.Y);
                 quickSettingsWorkLeft = screen.WorkingArea.Left;
                 quickSettingsWorkRight = screen.WorkingArea.Right;
                 quickSettingsWorkTop = screen.WorkingArea.Top;
+                quickSettingsWorkBottom = screen.WorkingArea.Bottom;
 
                 ReleaseQuickSettingsHook();
                 int generation = ++quickSettingsHookGeneration;
@@ -6290,9 +6499,25 @@ namespace DockBar
             int width = bounds.Right - bounds.Left;
             int height = bounds.Bottom - bounds.Top;
             if (width < 220 || height < 180) return false;
-            int left = quickSettingsAnchorX - width / 2;
+            int left;
+            int top;
+            if (IsDockLeft)
+            {
+                left = quickSettingsBarRight + 8;
+                top = quickSettingsAnchorY - height / 2;
+            }
+            else if (IsDockRight)
+            {
+                left = quickSettingsBarLeft - width - 8;
+                top = quickSettingsAnchorY - height / 2;
+            }
+            else
+            {
+                left = quickSettingsAnchorX - width / 2;
+                top = IsDockTop ? quickSettingsBarBottom + 8 : quickSettingsBarTop - height - 38;
+            }
             left = Math.Max(quickSettingsWorkLeft + 8, Math.Min(left, quickSettingsWorkRight - width - 8));
-            int top = Math.Max(quickSettingsWorkTop + 8, quickSettingsBarTop - height - 38);
+            top = Math.Max(quickSettingsWorkTop + 8, Math.Min(top, quickSettingsWorkBottom - height - 8));
             return SetWindowPos(window, IntPtr.Zero, left, top, 0, 0, 0x0001 | 0x0004 | 0x0010);
         }
 
@@ -6380,14 +6605,20 @@ namespace DockBar
         {
             try
             {
-                Point arrow = trayArrowText.PointToScreen(new Point(trayArrowText.ActualWidth / 2, 0));
+                Point arrow = trayArrowText.PointToScreen(new Point(trayArrowText.ActualWidth / 2, trayArrowText.ActualHeight / 2));
                 Point bar = dockShell.PointToScreen(new Point(0, 0));
+                Point barBottomRight = dockShell.PointToScreen(new Point(dockShell.ActualWidth, dockShell.ActualHeight));
                 var screen = Forms.Screen.FromPoint(new Drawing.Point((int)Math.Round(arrow.X), (int)Math.Round(arrow.Y)));
                 trayPopupAnchorX = (int)Math.Round(arrow.X);
+                trayPopupAnchorY = (int)Math.Round(arrow.Y);
+                trayPopupBarLeft = (int)Math.Round(bar.X);
                 trayPopupBarTop = (int)Math.Round(bar.Y);
+                trayPopupBarRight = (int)Math.Round(barBottomRight.X);
+                trayPopupBarBottom = (int)Math.Round(barBottomRight.Y);
                 trayPopupWorkLeft = screen.WorkingArea.Left;
                 trayPopupWorkRight = screen.WorkingArea.Right;
                 trayPopupWorkTop = screen.WorkingArea.Top;
+                trayPopupWorkBottom = screen.WorkingArea.Bottom;
 
                 ReleaseTrayOverflowHook();
                 int hookGeneration = ++trayOverflowHookGeneration;
@@ -6458,9 +6689,25 @@ namespace DockBar
             int width = bounds.Right - bounds.Left;
             int height = bounds.Bottom - bounds.Top;
             if (width <= 0 || height <= 0) return false;
-            int left = trayPopupAnchorX - width / 2;
+            int left;
+            int top;
+            if (IsDockLeft)
+            {
+                left = trayPopupBarRight + 8;
+                top = trayPopupAnchorY - height / 2;
+            }
+            else if (IsDockRight)
+            {
+                left = trayPopupBarLeft - width - 8;
+                top = trayPopupAnchorY - height / 2;
+            }
+            else
+            {
+                left = trayPopupAnchorX - width / 2;
+                top = IsDockTop ? trayPopupBarBottom + 8 : trayPopupBarTop - height - 9;
+            }
             left = Math.Max(trayPopupWorkLeft + 6, Math.Min(left, trayPopupWorkRight - width - 6));
-            int top = Math.Max(trayPopupWorkTop + 6, trayPopupBarTop - height - 9);
+            top = Math.Max(trayPopupWorkTop + 6, Math.Min(top, trayPopupWorkBottom - height - 6));
             return SetWindowPos(overflow, IntPtr.Zero, left, top, 0, 0, 0x0001 | 0x0004 | 0x0010);
         }
 
@@ -6751,11 +6998,10 @@ namespace DockBar
                 var current = workspaceManager.ActiveWorkspace;
                 if (current != null)
                 {
-                    WorkspaceHudWindow.ShowHud(
+                    ShowWorkspaceHud(
                         String.IsNullOrWhiteSpace(current.Icon) ? "💼" : current.Icon,
                         current.Name,
-                        "Espaço " + (index + 1) + " • Ativo (Ctrl+Alt+" + (index + 1) + ")",
-                        Left, ActualWidth, Top);
+                        "Espaço " + (index + 1) + " • Ativo (Ctrl+Alt+" + (index + 1) + ")");
                 }
                 return;
             }
@@ -6764,11 +7010,10 @@ namespace DockBar
             var ws = workspaceManager.ActiveWorkspace;
             if (ws != null)
             {
-                WorkspaceHudWindow.ShowHud(
+                ShowWorkspaceHud(
                     String.IsNullOrWhiteSpace(ws.Icon) ? "💼" : ws.Icon,
                     ws.Name,
-                    "Espaço " + (index + 1) + " • Ctrl+Alt+" + (index + 1),
-                    Left, ActualWidth, Top);
+                    "Espaço " + (index + 1) + " • Ctrl+Alt+" + (index + 1));
             }
 
             // Atualização imediata (0ms de delay!)
@@ -6855,11 +7100,10 @@ namespace DockBar
                 }
             }
 
-            WorkspaceHudWindow.ShowHud(
+            ShowWorkspaceHud(
                 ws.Icon ?? "🚀",
                 "Espaço: " + ws.Name,
-                restored > 0 ? (restored + " janela(s) restaurada(s), " + launched + " aberta(s)") : (launched + " aplicativo(s) iniciado(s)"),
-                Left, ActualWidth, Top);
+                restored > 0 ? (restored + " janela(s) restaurada(s), " + launched + " aberta(s)") : (launched + " aplicativo(s) iniciado(s)"));
         }
 
         private void RegisterWorkspaceHotKeys()
@@ -6908,5395 +7152,4 @@ namespace DockBar
     /// ícone, numa miniatura ou usar o menu sempre chega aos mesmos caminhos,
     /// então restaurar, minimizar e fechar se comportam de forma idêntica.
     /// </summary>
-    internal static class WindowCommands
-    {
-        private const uint SystemCommand = 0x0112; // WM_SYSCOMMAND
-        private static readonly IntPtr MinimizeCommand = new IntPtr(0xF020); // SC_MINIMIZE
-        private static readonly IntPtr CloseCommand = new IntPtr(0xF060); // SC_CLOSE
-
-        public static bool IsAlive(IntPtr window)
-        {
-            return window != IntPtr.Zero && IsWindow(window);
-        }
-
-        public static bool IsMinimized(IntPtr window)
-        {
-            return IsAlive(window) && IsIconic(window);
-        }
-
-        public static void Activate(IntPtr window)
-        {
-            if (!IsAlive(window)) return;
-            // SW_RESTORE em uma janela maximizada a transforma em janela normal.
-            // Só restauramos quando ela está minimizada; nos demais casos SW_SHOW
-            // preserva o tamanho e o estado de maximização.
-            int command = IsIconic(window) ? 9 : 5;
-            // Uma janela travada bloquearia ShowWindow; a versão assíncrona
-            // deixa o fantasma do DWM tratar o pedido sem congelar a Dock.
-            if (IsHungAppWindow(window)) ShowWindowAsync(window, command);
-            else ShowWindow(window, command);
-            SetForegroundWindow(window);
-        }
-
-        public static void Restore(IntPtr window)
-        {
-            if (!IsMinimized(window)) return;
-            ShowWindowAsync(window, 9); // SW_RESTORE
-        }
-
-        public static void Minimize(IntPtr window)
-        {
-            if (!IsAlive(window) || IsIconic(window)) return;
-            // SC_MINIMIZE mantém a animação e as regras do próprio aplicativo,
-            // exatamente como o botão da barra de título.
-            if (IsHungAppWindow(window)) ShowWindowAsync(window, 6); // SW_MINIMIZE
-            else PostMessage(window, SystemCommand, MinimizeCommand, IntPtr.Zero);
-        }
-
-        public static void Close(IntPtr window)
-        {
-            if (!IsAlive(window)) return;
-            // SC_CLOSE equivale ao X da barra de título: respeita janelas que
-            // desabilitam o fechamento e permite ao app perguntar se deve salvar.
-            PostMessage(window, SystemCommand, CloseCommand, IntPtr.Zero);
-        }
-
-        [DllImport("user32.dll")]
-        private static extern bool IsWindow(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern bool IsIconic(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern bool IsHungAppWindow(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr window, int command);
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindowAsync(IntPtr window, int command);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetForegroundWindow(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern bool PostMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-    }
-
-    internal sealed class PreviewWindow : Window
-    {
-        private const double HeaderHeight = 40;
-        private const int MaximumColumns = 6;
-        private const int MaximumRows = 2;
-
-        private static readonly Brush CardBackground = Frozen(new SolidColorBrush(Color.FromRgb(31, 31, 34)));
-        private static readonly Brush CardSelectedBackground = Frozen(new SolidColorBrush(Color.FromRgb(44, 48, 58)));
-        private static readonly Brush CardBorder = Frozen(new SolidColorBrush(Color.FromArgb(70, 255, 255, 255)));
-        private static readonly Brush CardSelectedBorder = Frozen(new SolidColorBrush(Color.FromArgb(235, 25, 120, 225)));
-        private static readonly Brush SecondaryText = Frozen(new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)));
-
-        private readonly List<IntPtr> sourceWindows = new List<IntPtr>();
-        private readonly List<string> sourceTitles = new List<string>();
-        private readonly HashSet<IntPtr> closingWindows = new HashSet<IntPtr>();
-        private readonly string appName;
-        private readonly Size maximumArea;
-        private readonly Canvas root;
-
-        // Apenas os cartões da página visível existem e possuem thumbnail DWM
-        // registrado. Grupos grandes não multiplicam o custo de composição.
-        private readonly List<IntPtr> cardWindows = new List<IntPtr>();
-        private readonly List<Border> previewCards = new List<Border>();
-        private readonly List<TextBlock> cardLabels = new List<TextBlock>();
-        private readonly List<Border> cardMinimizeButtons = new List<Border>();
-        private readonly List<double> previewCardBaseTops = new List<double>();
-        private readonly List<double> previewCardCurrentTops = new List<double>();
-        private readonly List<double> previewCardTargetTops = new List<double>();
-        private readonly List<IntPtr> thumbnails = new List<IntPtr>();
-        private readonly List<NativeRect> thumbnailBaseDestinations = new List<NativeRect>();
-
-        private Border header;
-        private StackPanel headerPanel;
-        private Border headerPageSeparator;
-        private TextBlock headerTitle;
-        private TextBlock headerCount;
-        private TextBlock headerPage;
-        private Border headerPrevious;
-        private Border headerNext;
-        private TextBlock headerPreviousGlyph;
-        private TextBlock headerNextGlyph;
-        private Brush headerButtonHover;
-        private Brush cardHoverBorder;
-        private readonly Color? accentColor;
-
-        private double cardWidth = 255;
-        private double cardHeight = 190;
-        private double waveHeadroom;
-        private double headerSpace;
-        private int columns = 1;
-        private int rows = 1;
-        private int pageSize = 1;
-        private int pageIndex;
-        private int pageCount = 1;
-
-        private readonly DispatcherTimer peekTimer;
-        private readonly DispatcherTimer previewWaveTimer;
-        private readonly DispatcherTimer validationTimer;
-        private double thumbnailDpiX = 1;
-        private double thumbnailDpiY = 1;
-        private double previewPointerX;
-        private IntPtr selectedWindow;
-        private IntPtr pendingPeekTarget;
-        private IntPtr peekTarget;
-        private IntPtr peekPreviousForeground;
-        private bool peekTargetWasMinimized;
-        private bool peekTargetWasTopmost;
-        private bool isClosed;
-
-        // Navegação por teclado: o gancho só existe enquanto a prévia está
-        // visível e só consome teclas depois que o usuário começa a navegar.
-        private bool keyboardMode;
-        private IntPtr keyboardForeground;
-        private int lastOwnActionTick;
-        private LowLevelKeyboardProc keyboardProc;
-        private IntPtr keyboardHook;
-        private readonly HashSet<int> capturedKeys = new HashSet<int>();
-
-        /// <summary>Disparado quando o tamanho da prévia muda e ela precisa ser reposicionada.</summary>
-        public event EventHandler LayoutChanged;
-
-        /// <summary>Disparado quando janelas do grupo foram fechadas ou desapareceram.</summary>
-        public event EventHandler WindowsChanged;
-
-        public bool KeyboardActive { get { return keyboardMode && !isClosed; } }
-
-        public PreviewWindow(IEnumerable<IntPtr> sources, IList<string> titles, string appName, Size maximumArea, Color? accentColor = null)
-        {
-            this.appName = appName ?? String.Empty;
-            this.maximumArea = maximumArea.Width >= 200 && maximumArea.Height >= 200
-                ? maximumArea
-                : new Size(SystemParameters.WorkArea.Width, SystemParameters.WorkArea.Height);
-            this.accentColor = accentColor;
-            ReadSources(sources, titles, sourceWindows, sourceTitles);
-            WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            ResizeMode = ResizeMode.NoResize;
-            ShowInTaskbar = false;
-            ShowActivated = false;
-            Topmost = true;
-            Background = Brushes.Transparent;
-
-            peekTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
-            peekTimer.Tick += delegate
-            {
-                peekTimer.Stop();
-                if (pendingPeekTarget != IntPtr.Zero) BeginPeek(pendingPeekTarget);
-            };
-
-            previewWaveTimer = new DispatcherTimer(DispatcherPriority.Render)
-            {
-                Interval = TimeSpan.FromMilliseconds(16)
-            };
-            previewWaveTimer.Tick += delegate { RenderPreviewWave(); };
-
-            // Verificação leve do estado das janelas (fechada, minimizada). Só
-            // roda enquanto a prévia está visível.
-            validationTimer = new DispatcherTimer(DispatcherPriority.Background)
-            {
-                Interval = TimeSpan.FromMilliseconds(400)
-            };
-            validationTimer.Tick += delegate { ValidateSources(); };
-
-            // A Window serve apenas como superfície para os cartões e thumbnails;
-            // todo o espaço entre eles permanece visualmente transparente.
-            root = new Canvas { Background = Brushes.Transparent };
-            root.MouseMove += delegate(object sender, MouseEventArgs args)
-            {
-                previewPointerX = args.GetPosition(root).X;
-                UpdatePreviewWaveTargets();
-                if (!previewWaveTimer.IsEnabled) previewWaveTimer.Start();
-            };
-            root.MouseWheel += delegate(object sender, MouseWheelEventArgs args)
-            {
-                if (pageCount <= 1) return;
-                args.Handled = true;
-                ChangePage(args.Delta < 0 ? 1 : -1);
-            };
-            Content = root;
-            BuildHeader();
-            ApplyLayout(false);
-
-            IsVisibleChanged += delegate
-            {
-                if (isClosed) return;
-                if (IsVisible)
-                {
-                    RegisterThumbnails();
-                    InstallKeyboardHook();
-                    validationTimer.Start();
-                }
-                else
-                {
-                    // Prévia oculta (por exemplo, junto com a Dock): nada de
-                    // thumbnails vivos, timers ou gancho de teclado.
-                    validationTimer.Stop();
-                    previewWaveTimer.Stop();
-                    CancelPeek();
-                    RemoveKeyboardHook();
-                    UnregisterThumbnails();
-                }
-            };
-            Closed += delegate
-            {
-                isClosed = true;
-                validationTimer.Stop();
-                previewWaveTimer.Stop();
-                RemoveKeyboardHook();
-                EndPeek(true);
-                UnregisterThumbnails();
-            };
-        }
-
-        /// <summary>
-        /// Atualiza o grupo exibido sem recriar a janela. Se nada mudou, apenas
-        /// os títulos são atualizados e nenhum thumbnail é registrado de novo.
-        /// </summary>
-        public void UpdateSources(IEnumerable<IntPtr> sources, IList<string> titles)
-        {
-            if (isClosed) return;
-            var windows = new List<IntPtr>();
-            var names = new List<string>();
-            ReadSources(sources, titles, windows, names);
-            if (windows.Count == 0)
-            {
-                Close();
-                return;
-            }
-            if (windows.SequenceEqual(sourceWindows))
-            {
-                sourceTitles.Clear();
-                sourceTitles.AddRange(names);
-                for (int index = 0; index < cardWindows.Count; index++)
-                {
-                    int source = sourceWindows.IndexOf(cardWindows[index]);
-                    if (source < 0) continue;
-                    string title = String.IsNullOrWhiteSpace(sourceTitles[source]) ? appName : sourceTitles[source];
-                    if (cardLabels[index].Text != title) cardLabels[index].Text = title;
-                }
-                return;
-            }
-            int selectedIndex = sourceWindows.IndexOf(selectedWindow);
-            sourceWindows.Clear();
-            sourceWindows.AddRange(windows);
-            sourceTitles.Clear();
-            sourceTitles.AddRange(names);
-            closingWindows.RemoveWhere(window => !sourceWindows.Contains(window));
-            if (!sourceWindows.Contains(selectedWindow))
-                selectedWindow = keyboardMode && selectedIndex >= 0
-                    ? sourceWindows[Math.Min(selectedIndex, sourceWindows.Count - 1)]
-                    : IntPtr.Zero;
-            ApplyLayout(true);
-        }
-
-        private static void ReadSources(IEnumerable<IntPtr> sources, IList<string> titles, List<IntPtr> windows, List<string> names)
-        {
-            windows.Clear();
-            names.Clear();
-            if (sources == null) return;
-            int index = 0;
-            foreach (IntPtr handle in sources)
-            {
-                // O título acompanha o índice original, mesmo quando um handle
-                // repetido ou nulo é descartado.
-                string title = titles != null && index < titles.Count ? titles[index] : null;
-                index++;
-                if (handle == IntPtr.Zero || windows.Contains(handle)) continue;
-                windows.Add(handle);
-                names.Add(title);
-            }
-        }
-
-        private void ComputeLayout()
-        {
-            int count = Math.Max(1, sourceWindows.Count);
-            // Cartões ficam mais compactos conforme o grupo cresce, mantendo
-            // várias janelas legíveis lado a lado.
-            if (count <= 3)
-            {
-                cardWidth = 255;
-                cardHeight = 190;
-            }
-            else if (count <= 6)
-            {
-                cardWidth = 222;
-                cardHeight = 168;
-            }
-            else
-            {
-                cardWidth = 196;
-                cardHeight = 150;
-            }
-            headerSpace = sourceWindows.Count >= 1 ? HeaderHeight : 0;
-            waveHeadroom = count > 1 ? 18 : 0;
-
-            int maxColumns = (int)Math.Floor((maximumArea.Width - 24) / (cardWidth + 8));
-            maxColumns = Math.Max(1, Math.Min(MaximumColumns, maxColumns));
-            double availableHeight = maximumArea.Height * .62 - headerSpace - waveHeadroom - 16;
-            int maxRows = (int)Math.Floor(availableHeight / (cardHeight + 8));
-            maxRows = Math.Max(1, Math.Min(MaximumRows, maxRows));
-            int capacity = maxColumns * maxRows;
-
-            if (count <= capacity)
-            {
-                // Distribui em linhas equilibradas (ex.: 7 janelas = 4 + 3,
-                // em vez de 6 + 1).
-                rows = (int)Math.Ceiling((double)count / maxColumns);
-                columns = (int)Math.Ceiling((double)count / rows);
-                pageSize = count;
-                pageCount = 1;
-            }
-            else
-            {
-                // Grupos maiores que a tela são paginados. O tamanho da janela
-                // permanece fixo entre páginas para não "pular" sobre a Dock.
-                columns = maxColumns;
-                rows = maxRows;
-                pageSize = capacity;
-                pageCount = (int)Math.Ceiling((double)count / capacity);
-            }
-            pageIndex = Math.Max(0, Math.Min(pageIndex, pageCount - 1));
-            Width = 8 + columns * (cardWidth + 8);
-            Height = 8 + headerSpace + waveHeadroom + rows * (cardHeight + 8);
-        }
-
-        private void ApplyLayout(bool notify)
-        {
-            double oldWidth = Width;
-            double oldHeight = Height;
-            ComputeLayout();
-            UpdateHeader();
-            BuildPage();
-            if (!notify || LayoutChanged == null) return;
-            if (Double.IsNaN(oldWidth) || Double.IsNaN(oldHeight) ||
-                Math.Abs(oldWidth - Width) > .5 || Math.Abs(oldHeight - Height) > .5)
-                LayoutChanged(this, EventArgs.Empty);
-        }
-
-        private void BuildHeader()
-        {
-            headerTitle = new TextBlock
-            {
-                Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontSize = 12,
-                FontWeight = FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center,
-                TextTrimming = TextTrimming.CharacterEllipsis
-            };
-            headerCount = new TextBlock
-            {
-                Foreground = SecondaryText, FontFamily = new FontFamily("Segoe UI"), FontSize = 12,
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(7, 0, 0, 0)
-            };
-            headerPrevious = HeaderButton("\uE76B", "Página anterior", out headerPreviousGlyph);
-            headerPrevious.MouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs args)
-            {
-                args.Handled = true;
-                ChangePage(-1);
-            };
-            headerPage = new TextBlock
-            {
-                Foreground = SecondaryText, FontFamily = new FontFamily("Segoe UI"), FontSize = 11,
-                VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(3, 0, 3, 0)
-            };
-            headerNext = HeaderButton("\uE76C", "Próxima página", out headerNextGlyph);
-            headerNext.MouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs args)
-            {
-                args.Handled = true;
-                ChangePage(1);
-            };
-            headerPanel = new StackPanel
-            {
-                Orientation = Orientation.Horizontal,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(12, 0, 12, 0)
-            };
-            headerPanel.Children.Add(headerTitle);
-            headerPanel.Children.Add(headerCount);
-            headerPageSeparator = new Border { Width = 8, Visibility = Visibility.Collapsed };
-            headerPanel.Children.Add(headerPageSeparator);
-            headerPanel.Children.Add(headerPrevious);
-            headerPanel.Children.Add(headerPage);
-            headerPanel.Children.Add(headerNext);
-            header = new Border
-            {
-                Height = 26,
-                CornerRadius = new CornerRadius(13),
-                Background = new SolidColorBrush(Color.FromArgb(238, 31, 31, 34)),
-                BorderBrush = CardBorder,
-                BorderThickness = new Thickness(1),
-                Effect = new DropShadowEffect
-                {
-                    BlurRadius = 10,
-                    ShadowDepth = 2,
-                    Direction = 270,
-                    Opacity = 0.38,
-                    Color = Color.FromRgb(0, 0, 0)
-                },
-                Child = headerPanel,
-                Visibility = Visibility.Collapsed
-            };
-            ApplyHeaderTheme(accentColor);
-            header.SizeChanged += delegate { CenterHeader(); };
-            Canvas.SetTop(header, 2);
-            root.Children.Add(header);
-        }
-
-        private Border HeaderButton(string glyph, string tip, out TextBlock glyphBlock)
-        {
-            glyphBlock = new TextBlock
-            {
-                Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 9,
-                Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var button = new Border
-            {
-                Width = 22,
-                Height = 20,
-                CornerRadius = new CornerRadius(5),
-                Background = Brushes.Transparent,
-                Cursor = Cursors.Hand,
-                ToolTip = tip,
-                Child = glyphBlock
-            };
-            button.MouseEnter += delegate { button.Background = headerButtonHover ?? Brushes.Transparent; };
-            button.MouseLeave += delegate { button.Background = Brushes.Transparent; };
-            return button;
-        }
-
-        private void ApplyHeaderTheme(Color? accent)
-        {
-            if (header == null) return;
-            if (!accent.HasValue)
-            {
-                cardHoverBorder = CardSelectedBorder;
-                header.Background = new SolidColorBrush(Color.FromArgb(238, 31, 31, 34));
-                header.BorderBrush = CardBorder;
-                headerTitle.Foreground = Brushes.White;
-                headerCount.Foreground = SecondaryText;
-                headerPage.Foreground = SecondaryText;
-                if (headerPreviousGlyph != null) headerPreviousGlyph.Foreground = Brushes.White;
-                if (headerNextGlyph != null) headerNextGlyph.Foreground = Brushes.White;
-                headerButtonHover = new SolidColorBrush(Color.FromArgb(55, 255, 255, 255));
-                return;
-            }
-
-            Color c = accent.Value;
-            byte r = c.R;
-            byte g = c.G;
-            byte b = c.B;
-            if (r < 35 && g < 35 && b < 35)
-            {
-                r = 38; g = 40; b = 46;
-            }
-
-            double lum = (0.299 * r + 0.587 * g + 0.114 * b);
-            bool isLight = lum > 145;
-
-            header.Background = new SolidColorBrush(Color.FromArgb(215, r, g, b));
-            cardHoverBorder = new SolidColorBrush(Color.FromArgb(245, r, g, b));
-
-            if (isLight)
-            {
-                byte br = (byte)Math.Max(0, r - 45);
-                byte bg = (byte)Math.Max(0, g - 45);
-                byte bb = (byte)Math.Max(0, b - 45);
-                header.BorderBrush = new SolidColorBrush(Color.FromArgb(245, br, bg, bb));
-
-                Brush darkText = Frozen(new SolidColorBrush(Color.FromRgb(20, 20, 24)));
-                Brush darkSecText = Frozen(new SolidColorBrush(Color.FromArgb(190, 20, 20, 24)));
-                headerTitle.Foreground = darkText;
-                headerCount.Foreground = darkSecText;
-                headerPage.Foreground = darkSecText;
-                if (headerPreviousGlyph != null) headerPreviousGlyph.Foreground = darkText;
-                if (headerNextGlyph != null) headerNextGlyph.Foreground = darkText;
-                headerButtonHover = new SolidColorBrush(Color.FromArgb(40, 0, 0, 0));
-            }
-            else
-            {
-                byte br = (byte)Math.Min(255, r + 40);
-                byte bg = (byte)Math.Min(255, g + 40);
-                byte bb = (byte)Math.Min(255, b + 40);
-                header.BorderBrush = new SolidColorBrush(Color.FromArgb(245, br, bg, bb));
-
-                Brush whiteSecText = Frozen(new SolidColorBrush(Color.FromArgb(215, 255, 255, 255)));
-                headerTitle.Foreground = Brushes.White;
-                headerCount.Foreground = whiteSecText;
-                headerPage.Foreground = whiteSecText;
-                if (headerPreviousGlyph != null) headerPreviousGlyph.Foreground = Brushes.White;
-                if (headerNextGlyph != null) headerNextGlyph.Foreground = Brushes.White;
-                headerButtonHover = new SolidColorBrush(Color.FromArgb(60, 255, 255, 255));
-            }
-        }
-
-        private void CenterHeader()
-        {
-            if (header == null) return;
-            header.Measure(new Size(Double.PositiveInfinity, Double.PositiveInfinity));
-            double headerWidth = header.DesiredSize.Width > 0 ? header.DesiredSize.Width : header.ActualWidth;
-            double windowWidth = Double.IsNaN(Width) ? 300 : Width;
-            double left = Math.Max(8, (windowWidth - headerWidth) / 2.0);
-            Canvas.SetLeft(header, left);
-        }
-
-        private void UpdateHeader()
-        {
-            bool visible = sourceWindows.Count >= 1;
-            header.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-            if (!visible) return;
-            bool paged = pageCount > 1;
-            headerTitle.Text = String.IsNullOrWhiteSpace(appName) ? "Janelas" : appName;
-            headerCount.Text = sourceWindows.Count == 1 ? "1 janela" : sourceWindows.Count.ToString(CultureInfo.CurrentCulture) + " janelas";
-            Visibility navigation = paged ? Visibility.Visible : Visibility.Collapsed;
-            headerPageSeparator.Visibility = navigation;
-            headerPrevious.Visibility = navigation;
-            headerPage.Visibility = navigation;
-            headerNext.Visibility = navigation;
-            headerPanel.Margin = paged ? new Thickness(12, 0, 6, 0) : new Thickness(12, 0, 12, 0);
-            headerPage.Text = (pageIndex + 1).ToString(CultureInfo.CurrentCulture) + "/" + pageCount.ToString(CultureInfo.CurrentCulture);
-            double width = Double.IsNaN(Width) ? 300 : Width;
-            headerTitle.MaxWidth = Math.Max(60, width - (paged ? 200 : 130));
-            CenterHeader();
-        }
-
-        private void BuildPage()
-        {
-            CancelPeek();
-            UnregisterThumbnails();
-            foreach (Border card in previewCards) root.Children.Remove(card);
-            cardWindows.Clear();
-            previewCards.Clear();
-            cardLabels.Clear();
-            cardMinimizeButtons.Clear();
-            previewCardBaseTops.Clear();
-            previewCardCurrentTops.Clear();
-            previewCardTargetTops.Clear();
-
-            int start = pageIndex * pageSize;
-            int end = Math.Min(sourceWindows.Count, start + pageSize);
-            for (int index = start; index < end; index++)
-            {
-                int slot = index - start;
-                int column = slot % columns;
-                int row = slot / columns;
-                // A última linha incompleta fica centralizada sobre o ícone.
-                int itemsInRow = Math.Min(columns, end - start - row * columns);
-                double rowOffset = (columns - itemsInRow) * (cardWidth + 8) / 2;
-                double centerColumn = (itemsInRow - 1) / 2.0;
-                double edgeDistance = Math.Max(1, centerColumn);
-                double centrality = Math.Max(0, 1 - Math.Abs(column - centerColumn) / edgeDistance);
-                double centralityLift = sourceWindows.Count > 1 ? centrality * 8 : 0;
-                double cardTop = 6 + headerSpace + waveHeadroom + row * (cardHeight + 8) - centralityLift;
-                double cardLeft = 8 + rowOffset + column * (cardWidth + 8);
-
-                IntPtr window = sourceWindows[index];
-                string title = !String.IsNullOrWhiteSpace(sourceTitles[index]) ? sourceTitles[index] : appName;
-                Border card = BuildCard(window, title);
-                Canvas.SetLeft(card, cardLeft);
-                Canvas.SetTop(card, cardTop);
-                cardWindows.Add(window);
-                previewCards.Add(card);
-                previewCardBaseTops.Add(cardTop);
-                previewCardCurrentTops.Add(cardTop);
-                previewCardTargetTops.Add(cardTop);
-                root.Children.Add(card);
-            }
-            UpdateCardStates();
-            UpdateSelectionVisuals();
-            if (IsVisible) RegisterThumbnails();
-        }
-
-        private Border BuildCard(IntPtr sourceWindow, string title)
-        {
-            var card = new Border
-            {
-                Width = cardWidth,
-                Height = cardHeight,
-                CornerRadius = new CornerRadius(8),
-                Background = CardBackground,
-                BorderBrush = CardBorder,
-                BorderThickness = new Thickness(1),
-                Cursor = Cursors.Hand
-            };
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(34) });
-            var titleBar = new Grid();
-            titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-            titleBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(34) });
-            var label = new TextBlock { Text = title, Foreground = Brushes.White, FontFamily = new FontFamily("Segoe UI"), FontSize = 12, Margin = new Thickness(11, 0, 4, 0), VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis };
-            titleBar.Children.Add(label);
-
-            Border minimize = CaptionButton("\uE921", "Minimizar janela", Color.FromArgb(60, 255, 255, 255));
-            minimize.MouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs args)
-            {
-                args.Handled = true;
-                ToggleMinimize(sourceWindow);
-            };
-            Grid.SetColumn(minimize, 1);
-            titleBar.Children.Add(minimize);
-
-            Border close = CaptionButton("\uE8BB", "Fechar janela", Color.FromRgb(232, 54, 48));
-            close.MouseLeftButtonUp += delegate(object sender, MouseButtonEventArgs args)
-            {
-                args.Handled = true;
-                CloseSourceWindow(sourceWindow);
-            };
-            Grid.SetColumn(close, 2);
-            titleBar.Children.Add(close);
-
-            Grid.SetRow(titleBar, 1);
-            grid.Children.Add(titleBar);
-            card.Child = grid;
-            card.MouseEnter += delegate
-            {
-                SelectWindow(sourceWindow, false);
-                SchedulePeek(sourceWindow);
-            };
-            card.MouseLeave += delegate
-            {
-                CancelPeek();
-                if (!keyboardMode)
-                {
-                    selectedWindow = IntPtr.Zero;
-                    UpdateSelectionVisuals();
-                }
-            };
-            card.MouseLeftButtonUp += delegate { ActivateAndDismiss(sourceWindow); };
-            // Clique do meio fecha a janela, como na barra de tarefas.
-            card.MouseUp += delegate(object sender, MouseButtonEventArgs args)
-            {
-                if (args.ChangedButton != MouseButton.Middle) return;
-                args.Handled = true;
-                CloseSourceWindow(sourceWindow);
-            };
-            cardLabels.Add(label);
-            cardMinimizeButtons.Add(minimize);
-            return card;
-        }
-
-        private static Border CaptionButton(string glyph, string tip, Color hoverColor)
-        {
-            var button = new Border
-            {
-                Background = Brushes.Transparent,
-                Cursor = Cursors.Hand,
-                ToolTip = tip,
-                CornerRadius = new CornerRadius(5),
-                Margin = new Thickness(1, 4, 4, 4),
-                Child = new TextBlock
-                {
-                    Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 10,
-                    Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center,
-                    VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            var hover = new SolidColorBrush(hoverColor);
-            button.MouseEnter += delegate { button.Background = hover; };
-            button.MouseLeave += delegate { button.Background = Brushes.Transparent; };
-            return button;
-        }
-
-        private bool IsMinimizedForUser(IntPtr window)
-        {
-            // Durante a espiada a janela minimizada fica temporariamente visível;
-            // para o usuário ela continua minimizada.
-            return window == peekTarget ? peekTargetWasMinimized : WindowCommands.IsMinimized(window);
-        }
-
-        private void UpdateCardStates()
-        {
-            for (int index = 0; index < cardWindows.Count; index++)
-            {
-                IntPtr window = cardWindows[index];
-                bool minimized = IsMinimizedForUser(window);
-                Border button = cardMinimizeButtons[index];
-                var glyph = button.Child as TextBlock;
-                string text = minimized ? "\uE923" : "\uE921";
-                if (glyph != null && glyph.Text != text)
-                {
-                    glyph.Text = text;
-                    button.ToolTip = minimized ? "Restaurar janela" : "Minimizar janela";
-                }
-                double opacity = closingWindows.Contains(window) ? .45 : (minimized ? .72 : 1);
-                if (Math.Abs(cardLabels[index].Opacity - opacity) > .01) cardLabels[index].Opacity = opacity;
-            }
-        }
-
-        private void UpdateSelectionVisuals()
-        {
-            Brush borderBrush = cardHoverBorder ?? CardSelectedBorder;
-            for (int index = 0; index < previewCards.Count; index++)
-            {
-                bool selected = cardWindows[index] == selectedWindow;
-                previewCards[index].BorderBrush = selected ? borderBrush : CardBorder;
-                previewCards[index].Background = selected ? CardSelectedBackground : CardBackground;
-            }
-        }
-
-        private void SelectWindow(IntPtr window, bool fromKeyboard)
-        {
-            if (!sourceWindows.Contains(window)) return;
-            selectedWindow = window;
-            if (fromKeyboard)
-            {
-                int page = sourceWindows.IndexOf(window) / Math.Max(1, pageSize);
-                if (page != pageIndex)
-                {
-                    pageIndex = page;
-                    UpdateHeader();
-                    BuildPage();
-                }
-                int slot = cardWindows.IndexOf(window);
-                if (slot >= 0)
-                {
-                    // A onda acompanha a seleção do teclado como acompanha o mouse.
-                    previewPointerX = Canvas.GetLeft(previewCards[slot]) + cardWidth / 2;
-                    UpdatePreviewWaveTargets();
-                    if (!previewWaveTimer.IsEnabled) previewWaveTimer.Start();
-                }
-                SchedulePeek(window);
-            }
-            UpdateSelectionVisuals();
-        }
-
-        private void ChangePage(int delta)
-        {
-            if (pageCount <= 1) return;
-            int next = ((pageIndex + delta) % pageCount + pageCount) % pageCount;
-            if (next == pageIndex) return;
-            pageIndex = next;
-            UpdateHeader();
-            BuildPage();
-            if (keyboardMode && cardWindows.Count > 0) SelectWindow(cardWindows[0], true);
-        }
-
-        private void ActivateAndDismiss(IntPtr window)
-        {
-            EndPeek(false);
-            lastOwnActionTick = Environment.TickCount;
-            WindowCommands.Activate(window);
-            Close();
-        }
-
-        private void ToggleMinimize(IntPtr window)
-        {
-            // Minimizada: restaurar leva o usuário até ela, igual a clicar no cartão.
-            if (IsMinimizedForUser(window))
-            {
-                ActivateAndDismiss(window);
-                return;
-            }
-            peekTimer.Stop();
-            pendingPeekTarget = IntPtr.Zero;
-            EndPeek(peekTarget != window);
-            lastOwnActionTick = Environment.TickCount;
-            WindowCommands.Minimize(window);
-            ScheduleQuickValidation();
-        }
-
-        private void CloseSourceWindow(IntPtr window)
-        {
-            peekTimer.Stop();
-            pendingPeekTarget = IntPtr.Zero;
-            EndPeek(peekTarget != window);
-            lastOwnActionTick = Environment.TickCount;
-            closingWindows.Add(window);
-            WindowCommands.Close(window);
-            // O cartão só sai quando a janela realmente fecha: se o aplicativo
-            // perguntar "deseja salvar?", a miniatura continua disponível.
-            int slot = cardWindows.IndexOf(window);
-            if (slot >= 0) SetThumbnailOpacity(slot, 110);
-            UpdateCardStates();
-            ScheduleQuickValidation();
-            if (WindowsChanged != null) WindowsChanged(this, EventArgs.Empty);
-        }
-
-        private void ScheduleQuickValidation()
-        {
-            validationTimer.Stop();
-            validationTimer.Interval = TimeSpan.FromMilliseconds(150);
-            if (IsVisible && !isClosed) validationTimer.Start();
-        }
-
-        private void ValidateSources()
-        {
-            validationTimer.Interval = TimeSpan.FromMilliseconds(400);
-            if (isClosed) return;
-            int selectedIndex = sourceWindows.IndexOf(selectedWindow);
-            bool removed = false;
-            for (int index = sourceWindows.Count - 1; index >= 0; index--)
-            {
-                IntPtr window = sourceWindows[index];
-                if (WindowCommands.IsAlive(window) && IsWindowVisible(window)) continue;
-                if (peekTarget == window) ForgetPeek();
-                if (pendingPeekTarget == window) pendingPeekTarget = IntPtr.Zero;
-                sourceWindows.RemoveAt(index);
-                sourceTitles.RemoveAt(index);
-                closingWindows.Remove(window);
-                removed = true;
-            }
-            if (sourceWindows.Count == 0)
-            {
-                Close();
-                return;
-            }
-            if (removed)
-            {
-                if (!sourceWindows.Contains(selectedWindow))
-                    selectedWindow = keyboardMode && selectedIndex >= 0
-                        ? sourceWindows[Math.Min(selectedIndex, sourceWindows.Count - 1)]
-                        : IntPtr.Zero;
-                ApplyLayout(true);
-                if (WindowsChanged != null) WindowsChanged(this, EventArgs.Empty);
-            }
-            else UpdateCardStates();
-
-            if (!keyboardMode) return;
-            // Se o usuário trocou de aplicativo por outro meio enquanto navegava
-            // pelo teclado, a prévia sai do caminho.
-            IntPtr foreground = GetForegroundWindow();
-            if (unchecked(Environment.TickCount - lastOwnActionTick) < 1500) keyboardForeground = foreground;
-            else if (foreground != keyboardForeground && !IsMouseOver) Close();
-        }
-
-        private void UpdatePreviewWaveTargets()
-        {
-            if (previewCards.Count < 2) return;
-            double radius = cardWidth * 1.30;
-            for (int index = 0; index < previewCards.Count; index++)
-            {
-                double center = Canvas.GetLeft(previewCards[index]) + cardWidth / 2;
-                double distance = Math.Abs(center - previewPointerX);
-                double influence = distance >= radius
-                    ? 0
-                    : (Math.Cos(Math.PI * distance / radius) + 1) / 2;
-                // A curvatura de repouso deixa o centro levemente elevado. Esta
-                // segunda elevação percorre os cartões seguindo o mouse.
-                previewCardTargetTops[index] = previewCardBaseTops[index] - 13 * influence;
-            }
-        }
-
-        private void RenderPreviewWave()
-        {
-            bool moving = false;
-            for (int index = 0; index < previewCards.Count; index++)
-            {
-                double current = previewCardCurrentTops[index];
-                double target = previewCardTargetTops[index];
-                double next = current + (target - current) * .30;
-                if (Math.Abs(target - next) < .08) next = target;
-                else moving = true;
-                if (Math.Abs(next - current) < .01) continue;
-                previewCardCurrentTops[index] = next;
-                Canvas.SetTop(previewCards[index], next);
-                UpdateThumbnailVerticalPosition(index, next - previewCardBaseTops[index]);
-            }
-            if (!moving) previewWaveTimer.Stop();
-        }
-
-        private void UpdateThumbnailVerticalPosition(int index, double offset)
-        {
-            if (index < 0 || index >= thumbnails.Count || index >= thumbnailBaseDestinations.Count) return;
-            IntPtr thumbnail = thumbnails[index];
-            if (thumbnail == IntPtr.Zero) return;
-            NativeRect baseline = thumbnailBaseDestinations[index];
-            int shift = (int)Math.Round(offset * thumbnailDpiY);
-            baseline.Top += shift;
-            baseline.Bottom += shift;
-            var properties = new ThumbnailProperties
-            {
-                Flags = 1, // DWM_TNP_RECTDESTINATION
-                Destination = baseline
-            };
-            DwmUpdateThumbnailProperties(thumbnail, ref properties);
-        }
-
-        private void SetThumbnailOpacity(int index, byte opacity)
-        {
-            if (index < 0 || index >= thumbnails.Count || thumbnails[index] == IntPtr.Zero) return;
-            var properties = new ThumbnailProperties { Flags = 4, Opacity = opacity }; // DWM_TNP_OPACITY
-            DwmUpdateThumbnailProperties(thumbnails[index], ref properties);
-        }
-
-        private void SchedulePeek(IntPtr sourceWindow)
-        {
-            if (sourceWindow == IntPtr.Zero || sourceWindow == peekTarget || closingWindows.Contains(sourceWindow)) return;
-            peekTimer.Stop();
-            if (peekTarget != IntPtr.Zero) EndPeek(true);
-            pendingPeekTarget = sourceWindow;
-            peekTimer.Start();
-        }
-
-        private void CancelPeek()
-        {
-            peekTimer.Stop();
-            pendingPeekTarget = IntPtr.Zero;
-            EndPeek(true);
-        }
-
-        private void BeginPeek(IntPtr sourceWindow)
-        {
-            EndPeek(true);
-            pendingPeekTarget = IntPtr.Zero;
-            if (isClosed || !WindowCommands.IsAlive(sourceWindow)) return;
-            peekTarget = sourceWindow;
-            peekPreviousForeground = GetForegroundWindow();
-            peekTargetWasMinimized = IsIconic(sourceWindow);
-            peekTargetWasTopmost = (GetWindowLong(sourceWindow, -20) & 0x00000008) != 0; // WS_EX_TOPMOST
-            if (peekTargetWasMinimized) ShowWindow(sourceWindow, 4); // SW_SHOWNOACTIVATE
-            const uint KeepGeometryNoActivateShow = 0x0001 | 0x0002 | 0x0010 | 0x0040;
-            // Inserir primeiro como HWND_TOPMOST fazia a janela cobrir a Dock por
-            // um único quadro antes de recolocarmos a prévia acima. Inserimos o
-            // aplicativo diretamente atrás da própria Dock: a troca fica atômica
-            // aos olhos do DWM, sem piscar e sem roubar o foco.
-            IntPtr previewHandle = new WindowInteropHelper(this).Handle;
-            IntPtr dockHandle = Owner == null ? IntPtr.Zero : new WindowInteropHelper(Owner).Handle;
-            IntPtr insertBehind = dockHandle != IntPtr.Zero ? dockHandle : previewHandle;
-            SetWindowPos(sourceWindow, insertBehind, 0, 0, 0, 0, KeepGeometryNoActivateShow);
-        }
-
-        private void ForgetPeek()
-        {
-            peekTarget = IntPtr.Zero;
-            peekPreviousForeground = IntPtr.Zero;
-            peekTargetWasMinimized = false;
-            peekTargetWasTopmost = false;
-        }
-
-        private void EndPeek(bool restorePrevious)
-        {
-            peekTimer.Stop();
-            if (peekTarget == IntPtr.Zero) return;
-            IntPtr target = peekTarget;
-            bool wasMinimized = peekTargetWasMinimized;
-            IntPtr previous = peekPreviousForeground;
-            bool wasTopmost = peekTargetWasTopmost;
-            ForgetPeek();
-            if (!WindowCommands.IsAlive(target)) return;
-
-            // Nunca deixa o aplicativo preso em "sempre no topo" depois da
-            // visualização temporária ou depois de clicar na miniatura.
-            if (!wasTopmost)
-                SetWindowPos(target, new IntPtr(-2), 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010); // HWND_NOTOPMOST
-            if (!restorePrevious) return;
-
-            // SW_SHOWMINNOACTIVE devolve a janela ao estado minimizado sem
-            // ativar outra janela no lugar, preservando o foco atual.
-            if (wasMinimized) ShowWindow(target, 7);
-            else if (previous != IntPtr.Zero && previous != target)
-                SetWindowPos(previous, IntPtr.Zero, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010);
-        }
-
-        private void UpdateDpi()
-        {
-            thumbnailDpiX = 1;
-            thumbnailDpiY = 1;
-            var presentation = PresentationSource.FromVisual(this);
-            if (presentation != null && presentation.CompositionTarget != null)
-            {
-                thumbnailDpiX = presentation.CompositionTarget.TransformToDevice.M11;
-                thumbnailDpiY = presentation.CompositionTarget.TransformToDevice.M22;
-            }
-        }
-
-        private void RegisterThumbnails()
-        {
-            UnregisterThumbnails();
-            if (isClosed) return;
-            IntPtr destination = new WindowInteropHelper(this).Handle;
-            if (destination == IntPtr.Zero) return;
-            UpdateDpi();
-            double dpiX = thumbnailDpiX;
-            double dpiY = thumbnailDpiY;
-            for (int index = 0; index < cardWindows.Count; index++)
-            {
-                thumbnails.Add(IntPtr.Zero);
-                thumbnailBaseDestinations.Add(default(NativeRect));
-                IntPtr thumbnail;
-                if (DwmRegisterThumbnail(destination, cardWindows[index], out thumbnail) != 0 || thumbnail == IntPtr.Zero) continue;
-                thumbnails[index] = thumbnail;
-                NativeSize sourceSize;
-                DwmQueryThumbnailSourceSize(thumbnail, out sourceSize);
-                int availableWidth = Math.Max(1, (int)Math.Round((cardWidth - 16) * dpiX));
-                int availableHeight = Math.Max(1, (int)Math.Round((cardHeight - 46) * dpiY));
-                double scale = Math.Min((double)availableWidth / Math.Max(1, sourceSize.Width), (double)availableHeight / Math.Max(1, sourceSize.Height));
-                int width = Math.Max(1, (int)(sourceSize.Width * scale));
-                int height = Math.Max(1, (int)(sourceSize.Height * scale));
-                int cardLeft = (int)Math.Round(Canvas.GetLeft(previewCards[index]) * dpiX);
-                int cardTop = (int)Math.Round(previewCardBaseTops[index] * dpiY);
-                int innerPaddingX = (int)Math.Round(8 * dpiX);
-                int innerPaddingY = (int)Math.Round(4 * dpiY);
-                int left = cardLeft + innerPaddingX + (availableWidth - width) / 2;
-                int top = cardTop + innerPaddingY + (availableHeight - height) / 2;
-                NativeRect destinationRect = new NativeRect { Left = left, Top = top, Right = left + width, Bottom = top + height };
-                thumbnailBaseDestinations[index] = destinationRect;
-                // A onda pode estar em andamento: aplica o deslocamento atual.
-                int shift = (int)Math.Round((previewCardCurrentTops[index] - previewCardBaseTops[index]) * dpiY);
-                destinationRect.Top += shift;
-                destinationRect.Bottom += shift;
-                byte opacity = closingWindows.Contains(cardWindows[index]) ? (byte)110 : (byte)255;
-                var properties = new ThumbnailProperties { Flags = 1 | 4 | 8 | 16, Destination = destinationRect, Opacity = opacity, Visible = true, SourceClientAreaOnly = false };
-                DwmUpdateThumbnailProperties(thumbnail, ref properties);
-            }
-        }
-
-        private void UnregisterThumbnails()
-        {
-            foreach (IntPtr thumbnail in thumbnails) if (thumbnail != IntPtr.Zero) DwmUnregisterThumbnail(thumbnail);
-            thumbnails.Clear();
-            thumbnailBaseDestinations.Clear();
-        }
-
-        private void InstallKeyboardHook()
-        {
-            if (keyboardHook != IntPtr.Zero || isClosed) return;
-            keyboardProc = KeyboardHookCallback;
-            keyboardHook = SetWindowsHookEx(13, keyboardProc, GetModuleHandle(null), 0); // WH_KEYBOARD_LL
-        }
-
-        private void RemoveKeyboardHook()
-        {
-            if (keyboardHook != IntPtr.Zero)
-            {
-                UnhookWindowsHookEx(keyboardHook);
-                keyboardHook = IntPtr.Zero;
-            }
-            keyboardProc = null;
-            capturedKeys.Clear();
-            keyboardMode = false;
-        }
-
-        private IntPtr KeyboardHookCallback(int code, IntPtr wParam, IntPtr lParam)
-        {
-            if (code >= 0 && !isClosed)
-            {
-                try
-                {
-                    int message = wParam.ToInt32();
-                    int virtualKey = Marshal.ReadInt32(lParam); // KBDLLHOOKSTRUCT.vkCode
-                    bool keyDown = message == 0x0100 || message == 0x0104;
-                    bool keyUp = message == 0x0101 || message == 0x0105;
-                    // A soltura de uma tecla consumida também é consumida, para o
-                    // aplicativo em foco nunca receber um "key up" órfão.
-                    if (keyUp && capturedKeys.Remove(virtualKey)) return new IntPtr(1);
-                    if (keyDown && ShouldCaptureKey(virtualKey, message))
-                    {
-                        capturedKeys.Add(virtualKey);
-                        bool shift = IsKeyPressed(0x10);
-                        int key = virtualKey;
-                        // O gancho precisa responder rápido; a ação roda logo em seguida.
-                        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(delegate { HandleKey(key, shift); }));
-                        return new IntPtr(1);
-                    }
-                }
-                catch { }
-            }
-            return CallNextHookEx(keyboardHook, code, wParam, lParam);
-        }
-
-        private bool ShouldCaptureKey(int virtualKey, int message)
-        {
-            if (message == 0x0104) return false; // WM_SYSKEYDOWN: Alt pressionado
-            // Atalhos com Ctrl, Alt ou Windows continuam indo para o sistema.
-            if (IsKeyPressed(0x11) || IsKeyPressed(0x12) || IsKeyPressed(0x5B) || IsKeyPressed(0x5C)) return false;
-            bool startsNavigation = virtualKey == 0x25 || virtualKey == 0x26 || virtualKey == 0x27 || virtualKey == 0x28 ||
-                virtualKey == 0x24 || virtualKey == 0x23 || virtualKey == 0x21 || virtualKey == 0x22;
-            bool modeKey = virtualKey == 0x09 || virtualKey == 0x0D || virtualKey == 0x20 ||
-                virtualKey == 0x2E || virtualKey == 0x1B || virtualKey == 0x4D;
-            if (keyboardMode) return startsNavigation || modeKey;
-            // Fora do modo teclado, só setas/Home/End/PgUp/PgDn com o cursor
-            // sobre a Dock ou a prévia iniciam a navegação. Digitação comum no
-            // aplicativo em foco nunca é interceptada.
-            if (!startsNavigation || !IsVisible || !IsCursorOverDockOrPreview()) return false;
-            keyboardMode = true;
-            keyboardForeground = GetForegroundWindow();
-            lastOwnActionTick = Environment.TickCount;
-            return true;
-        }
-
-        private bool IsCursorOverDockOrPreview()
-        {
-            CursorPoint cursor;
-            if (!GetCursorPos(out cursor)) return false;
-            if (WindowContains(new WindowInteropHelper(this).Handle, cursor)) return true;
-            return Owner != null && WindowContains(new WindowInteropHelper(Owner).Handle, cursor);
-        }
-
-        private static bool WindowContains(IntPtr window, CursorPoint point)
-        {
-            NativeRect rect;
-            if (window == IntPtr.Zero || !GetWindowRect(window, out rect)) return false;
-            return point.X >= rect.Left && point.X < rect.Right && point.Y >= rect.Top && point.Y < rect.Bottom;
-        }
-
-        private static bool IsKeyPressed(int virtualKey)
-        {
-            return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
-        }
-
-        private void HandleKey(int virtualKey, bool shift)
-        {
-            if (isClosed || sourceWindows.Count == 0) return;
-            int count = sourceWindows.Count;
-            int index = sourceWindows.IndexOf(selectedWindow);
-            int target;
-            switch (virtualKey)
-            {
-                case 0x25: // Esquerda
-                    target = index < 0 ? 0 : (index - 1 + count) % count;
-                    break;
-                case 0x27: // Direita
-                    target = index < 0 ? 0 : (index + 1) % count;
-                    break;
-                case 0x09: // Tab / Shift+Tab
-                    target = index < 0 ? 0 : (index + (shift ? count - 1 : 1)) % count;
-                    break;
-                case 0x26: // Cima
-                    target = index < 0 ? 0 : (index - columns >= 0 ? index - columns : index);
-                    break;
-                case 0x28: // Baixo
-                    target = index < 0 ? 0 : (index + columns < count ? index + columns : index);
-                    break;
-                case 0x24: // Home
-                    target = 0;
-                    break;
-                case 0x23: // End
-                    target = count - 1;
-                    break;
-                case 0x21: // Page Up
-                    target = index < 0 ? 0 : Math.Max(0, index - pageSize);
-                    break;
-                case 0x22: // Page Down
-                    target = index < 0 ? 0 : Math.Min(count - 1, index + pageSize);
-                    break;
-                case 0x0D: // Enter
-                case 0x20: // Espaço
-                    if (index >= 0) ActivateAndDismiss(selectedWindow);
-                    return;
-                case 0x2E: // Delete
-                    if (index >= 0) CloseSourceWindow(selectedWindow);
-                    return;
-                case 0x4D: // M
-                    if (index >= 0) ToggleMinimize(selectedWindow);
-                    return;
-                case 0x1B: // Esc
-                    Close();
-                    return;
-                default:
-                    return;
-            }
-            if (target >= 0 && target < count) SelectWindow(sourceWindows[target], true);
-        }
-
-        private static Brush Frozen(SolidColorBrush brush)
-        {
-            brush.Freeze();
-            return brush;
-        }
-
-        private delegate IntPtr LowLevelKeyboardProc(int code, IntPtr wParam, IntPtr lParam);
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NativeRect { public int Left, Top, Right, Bottom; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct NativeSize { public int Width, Height; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct CursorPoint { public int X, Y; }
-
-        [StructLayout(LayoutKind.Sequential)]
-        private struct ThumbnailProperties
-        {
-            public int Flags;
-            public NativeRect Destination;
-            public NativeRect Source;
-            public byte Opacity;
-            [MarshalAs(UnmanagedType.Bool)] public bool Visible;
-            [MarshalAs(UnmanagedType.Bool)] public bool SourceClientAreaOnly;
-        }
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmRegisterThumbnail(IntPtr destination, IntPtr source, out IntPtr thumbnail);
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmUnregisterThumbnail(IntPtr thumbnail);
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmUpdateThumbnailProperties(IntPtr thumbnail, ref ThumbnailProperties properties);
-
-        [DllImport("dwmapi.dll")]
-        private static extern int DwmQueryThumbnailSourceSize(IntPtr thumbnail, out NativeSize size);
-
-        [DllImport("user32.dll")]
-        private static extern bool ShowWindow(IntPtr window, int command);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr GetForegroundWindow();
-
-        [DllImport("user32.dll")]
-        private static extern bool IsIconic(IntPtr window);
-
-        [DllImport("user32.dll")]
-        private static extern bool IsWindowVisible(IntPtr window);
-
-        [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-        private static extern int GetWindowLong(IntPtr window, int index);
-
-        [DllImport("user32.dll")]
-        private static extern bool SetWindowPos(IntPtr window, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
-
-        [DllImport("user32.dll")]
-        private static extern bool GetCursorPos(out CursorPoint point);
-
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int virtualKey);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr SetWindowsHookEx(int hookId, LowLevelKeyboardProc callback, IntPtr module, uint threadId);
-
-        [DllImport("user32.dll")]
-        private static extern bool UnhookWindowsHookEx(IntPtr hook);
-
-        [DllImport("user32.dll")]
-        private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
-
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
-        private static extern IntPtr GetModuleHandle(string moduleName);
-    }
-
-    internal static class MacCursorService
-    {
-        private const uint IMAGE_CURSOR = 2;
-        private const uint SPI_SETCURSORS = 0x0057;
-        private const uint SPIF_UPDATEINIFILE = 0x01;
-        private const uint SPIF_SENDCHANGE = 0x02;
-
-        private const uint OCR_NORMAL = 32512;
-        private const uint OCR_IBEAM = 32513;
-        private const uint OCR_WAIT = 32514;
-        private const uint OCR_CROSS = 32515;
-        private const uint OCR_UP = 32516;
-        private const uint OCR_SIZENWSE = 32642;
-        private const uint OCR_SIZENESW = 32643;
-        private const uint OCR_SIZEWE = 32644;
-        private const uint OCR_SIZENS = 32645;
-        private const uint OCR_SIZEALL = 32646;
-        private const uint OCR_NO = 32648;
-        private const uint OCR_HAND = 32649;
-        private const uint OCR_APPSTARTING = 32650;
-
-        [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-        private static extern IntPtr LoadCursorFromFile(string lpFileName);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool SetSystemCursor(IntPtr hcur, uint id);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern IntPtr CopyImage(IntPtr h, uint type, int cx, int cy, uint flags);
-
-        [DllImport("user32.dll", EntryPoint = "SystemParametersInfo", SetLastError = true)]
-        private static extern bool SystemParametersInfo(uint uiAction, uint uiParam, IntPtr pvParam, uint fWinIni);
-
-        [DllImport("user32.dll", SetLastError = true)]
-        private static extern bool DestroyIcon(IntPtr hIcon);
-
-        private const string CursorsRegKey = @"Control Panel\Cursors";
-        private const string BackupRegKey = @"Control Panel\Cursors\BMFlow_Original_Backup";
-
-        public static bool IsEnabled { get; set; }
-        public static string CurrentTheme { get; set; }
-        public static string CurrentSize { get; set; }
-
-        static MacCursorService()
-        {
-            CurrentTheme = "macOS";
-            CurrentSize = "Regular";
-        }
-
-        private static readonly Dictionary<string, uint> RoleToOcr = new Dictionary<string, uint>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "Arrow", OCR_NORMAL },
-            { "IBeam", OCR_IBEAM },
-            { "Wait", OCR_WAIT },
-            { "Crosshair", OCR_CROSS },
-            { "UpArrow", OCR_UP },
-            { "SizeNWSE", OCR_SIZENWSE },
-            { "SizeNESW", OCR_SIZENESW },
-            { "SizeWE", OCR_SIZEWE },
-            { "SizeNS", OCR_SIZENS },
-            { "SizeAll", OCR_SIZEALL },
-            { "No", OCR_NO },
-            { "Hand", OCR_HAND },
-            { "AppStarting", OCR_APPSTARTING }
-        };
-
-        private static readonly Dictionary<string, string[]> RoleCandidates = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            { "Arrow", new[] { "arrow.cur", "pointer.cur", "Arrow.cur", "Pointer.cur" } },
-            { "Help", new[] { "help.cur", "Help.cur" } },
-            { "AppStarting", new[] { "appstarting.ani", "work.ani", "working.ani", "appstarting.cur", "work.cur" } },
-            { "Wait", new[] { "wait.ani", "busy.ani", "wait.cur", "busy.cur" } },
-            { "Crosshair", new[] { "crosshair.cur", "cross.cur", "precisionhair.cur", "Crosshair.cur", "Cross.cur" } },
-            { "IBeam", new[] { "ibeam.cur", "text.cur", "IBeam.cur", "Text.cur" } },
-            { "NWPen", new[] { "nwpen.cur", "handwriting.cur", "pen.cur" } },
-            { "No", new[] { "no.cur", "unavailiable.cur", "unavailable.cur", "No.cur" } },
-            { "SizeNS", new[] { "sizens.cur", "vert.cur", "SizeNS.cur", "Vert.cur" } },
-            { "SizeWE", new[] { "sizewe.cur", "horz.cur", "SizeWE.cur", "Horz.cur" } },
-            { "SizeNWSE", new[] { "sizenwse.cur", "dng1.cur" } },
-            { "SizeNESW", new[] { "sizenesw.cur", "dng2.cur" } },
-            { "SizeAll", new[] { "sizeall.cur", "move.cur", "SizeAll.cur", "Move.cur" } },
-            { "UpArrow", new[] { "uparrow.cur", "alternate.cur", "UpArrow.cur" } },
-            { "Hand", new[] { "hand.cur", "link.cur", "Hand.cur", "Link.cur" } },
-            { "Pin", new[] { "pin.cur", "Pin.cur" } },
-            { "Person", new[] { "person.cur", "Person.cur" } }
-        };
-
-        private static readonly Dictionary<string, ImageSource> PreviewCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
-
-        public static string GetFolderForSize(string size)
-        {
-            if (String.Equals(size, "Grande", StringComparison.OrdinalIgnoreCase) || String.Equals(size, "Large", StringComparison.OrdinalIgnoreCase))
-                return "macOS-Large-Windows";
-            if (String.Equals(size, "Extra Grande", StringComparison.OrdinalIgnoreCase) || String.Equals(size, "ExtraLarge", StringComparison.OrdinalIgnoreCase))
-                return "macOS-Extra-Large-Windows";
-            return "macOS-Regular-Windows";
-        }
-
-        public static string ResolveThemeDir(string theme, string size = "Regular")
-        {
-            string rel = "";
-            if (String.Equals(theme, "FluentDark", StringComparison.OrdinalIgnoreCase))
-                rel = System.IO.Path.Combine("Cursors", "DarkCursors");
-            else if (String.Equals(theme, "FluentLight", StringComparison.OrdinalIgnoreCase))
-                rel = System.IO.Path.Combine("Cursors", "LightCursors");
-            else if (String.Equals(theme, "FluentArteffect", StringComparison.OrdinalIgnoreCase))
-                rel = System.IO.Path.Combine("Cursors", "Fluent-v3-Arteffect");
-            else
-                rel = System.IO.Path.Combine("Cursors", "macOS", GetFolderForSize(size));
-
-            string appDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, rel);
-            if (Directory.Exists(appDir)) return appDir;
-
-            string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-            string appDataDir = System.IO.Path.Combine(appData, "BMFlow", rel);
-            if (Directory.Exists(appDataDir)) return appDataDir;
-
-            return appDir;
-        }
-
-        public static bool HasCursors(string dir)
-        {
-            if (String.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return false;
-            try
-            {
-                return Directory.GetFiles(dir, "*.cur").Length > 0 || Directory.GetFiles(dir, "*.ani").Length > 0;
-            }
-            catch { return false; }
-        }
-
-        public static string FindCursorFile(string dir, string role)
-        {
-            if (String.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
-            string[] candidates;
-            if (RoleCandidates.TryGetValue(role, out candidates))
-            {
-                foreach (string candidate in candidates)
-                {
-                    string full = System.IO.Path.Combine(dir, candidate);
-                    if (File.Exists(full)) return full;
-                }
-            }
-            try
-            {
-                foreach (string file in Directory.GetFiles(dir))
-                {
-                    string name = System.IO.Path.GetFileNameWithoutExtension(file);
-                    if (String.Equals(name, role, StringComparison.OrdinalIgnoreCase)) return file;
-                }
-            }
-            catch { }
-            return null;
-        }
-
-        private static void BackupOriginalCursors()
-        {
-            try
-            {
-                using (RegistryKey src = Registry.CurrentUser.OpenSubKey(CursorsRegKey, false))
-                {
-                    if (src == null) return;
-                    using (RegistryKey dst = Registry.CurrentUser.CreateSubKey(BackupRegKey))
-                    {
-                        if (dst == null) return;
-                        if (dst.ValueCount == 0)
-                        {
-                            foreach (string valName in src.GetValueNames())
-                            {
-                                object val = src.GetValue(valName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                                RegistryValueKind kind = src.GetValueKind(valName);
-                                if (val != null) dst.SetValue(valName, val, kind);
-                            }
-                        }
-                    }
-                }
-            }
-            catch { }
-        }
-
-        public static void Apply(string theme = null, string size = null)
-        {
-            if (!String.IsNullOrWhiteSpace(theme)) CurrentTheme = theme;
-            if (!String.IsNullOrWhiteSpace(size)) CurrentSize = size;
-            string dir = ResolveThemeDir(CurrentTheme, CurrentSize);
-            if (!Directory.Exists(dir) || !HasCursors(dir)) return;
-
-            BackupOriginalCursors();
-
-            try
-            {
-                string schemeName = "BMFlow (" + CurrentTheme + ")";
-                using (RegistryKey key = Registry.CurrentUser.CreateSubKey(CursorsRegKey))
-                {
-                    if (key != null)
-                    {
-                        key.SetValue("", schemeName, RegistryValueKind.String);
-                        key.SetValue("Scheme Source", 1, RegistryValueKind.DWord);
-                        foreach (string role in RoleCandidates.Keys)
-                        {
-                            string file = FindCursorFile(dir, role);
-                            if (!String.IsNullOrEmpty(file))
-                            {
-                                key.SetValue(role, file, RegistryValueKind.ExpandString);
-                            }
-                        }
-                    }
-                }
-
-                foreach (var pair in RoleToOcr)
-                {
-                    string filePath = FindCursorFile(dir, pair.Key);
-                    if (!String.IsNullOrEmpty(filePath))
-                    {
-                        IntPtr hCur = LoadCursorFromFile(filePath);
-                        if (hCur != IntPtr.Zero)
-                        {
-                            IntPtr hCopy = CopyImage(hCur, IMAGE_CURSOR, 0, 0, 0);
-                            if (hCopy != IntPtr.Zero)
-                            {
-                                SetSystemCursor(hCopy, pair.Value);
-                            }
-                            DestroyIcon(hCur);
-                        }
-                    }
-                }
-
-                SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-                IsEnabled = true;
-            }
-            catch { }
-        }
-
-        public static void Restore()
-        {
-            try
-            {
-                using (RegistryKey backup = Registry.CurrentUser.OpenSubKey(BackupRegKey, false))
-                using (RegistryKey dst = Registry.CurrentUser.CreateSubKey(CursorsRegKey))
-                {
-                    if (backup != null && dst != null && backup.ValueCount > 0)
-                    {
-                        foreach (string role in RoleCandidates.Keys)
-                        {
-                            dst.DeleteValue(role, false);
-                        }
-                        foreach (string valName in backup.GetValueNames())
-                        {
-                            object val = backup.GetValue(valName, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
-                            RegistryValueKind kind = backup.GetValueKind(valName);
-                            if (val != null) dst.SetValue(valName, val, kind);
-                        }
-                        try { Registry.CurrentUser.DeleteSubKeyTree(BackupRegKey, false); } catch { }
-                    }
-                    else if (dst != null)
-                    {
-                        foreach (string role in RoleCandidates.Keys)
-                        {
-                            dst.SetValue(role, "", RegistryValueKind.String);
-                        }
-                        dst.SetValue("", "Windows Padrão", RegistryValueKind.String);
-                        dst.SetValue("Scheme Source", 0, RegistryValueKind.DWord);
-                    }
-                }
-
-                SystemParametersInfo(SPI_SETCURSORS, 0, IntPtr.Zero, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE);
-                IsEnabled = false;
-            }
-            catch { }
-        }
-
-        public static ImageSource LoadCursorImage(string filePath)
-        {
-            try
-            {
-                if (!File.Exists(filePath)) return null;
-                lock (PreviewCache)
-                {
-                    ImageSource cached;
-                    if (PreviewCache.TryGetValue(filePath, out cached)) return cached;
-                }
-                IntPtr hCur = LoadCursorFromFile(filePath);
-                if (hCur == IntPtr.Zero) return null;
-                try
-                {
-                    BitmapSource src = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(hCur, Int32Rect.Empty, BitmapSizeOptions.FromEmptyOptions());
-                    src.Freeze();
-                    lock (PreviewCache)
-                    {
-                        PreviewCache[filePath] = src;
-                    }
-                    return src;
-                }
-                finally
-                {
-                    DestroyIcon(hCur);
-                }
-            }
-            catch
-            {
-                return null;
-            }
-        }
-    }
-
-    internal sealed class WorkspaceAppItem
-    {
-        public string Name;
-        public string Target;
-        public string Arguments;
-        public string AppUserModelId;
-        public string Identity;
-
-        public void NormalizeExecutable()
-        {
-            if (String.Equals(Target, "explorer.exe", StringComparison.OrdinalIgnoreCase) || String.IsNullOrWhiteSpace(Target))
-            {
-                string candidate = Arguments ?? String.Empty;
-                if (candidate.StartsWith("shell:AppsFolder\\", StringComparison.OrdinalIgnoreCase))
-                {
-                    candidate = candidate.Substring("shell:AppsFolder\\".Length);
-                }
-                if (File.Exists(candidate))
-                {
-                    Target = candidate;
-                    Arguments = String.Empty;
-                    return;
-                }
-                if (!String.IsNullOrWhiteSpace(Identity) && File.Exists(Identity))
-                {
-                    Target = Identity;
-                    Arguments = String.Empty;
-                    return;
-                }
-
-                string lowerName = (Name ?? String.Empty).ToLowerInvariant();
-                string lowerId = (AppUserModelId ?? Identity ?? String.Empty).ToLowerInvariant();
-
-                if (lowerName.Contains("edge") || lowerId.Contains("msedge"))
-                {
-                    string edgePath = @"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe";
-                    if (File.Exists(edgePath)) { Target = edgePath; Arguments = String.Empty; return; }
-                    edgePath = @"C:\Program Files\Microsoft\Edge\Application\msedge.exe";
-                    if (File.Exists(edgePath)) { Target = edgePath; Arguments = String.Empty; return; }
-                }
-                if (lowerName.Contains("steam") || lowerId.Contains("steam"))
-                {
-                    string steamPath = @"C:\Program Files (x86)\Steam\steam.exe";
-                    if (File.Exists(steamPath)) { Target = steamPath; Arguments = String.Empty; return; }
-                    steamPath = @"C:\Program Files\Steam\steam.exe";
-                    if (File.Exists(steamPath)) { Target = steamPath; Arguments = String.Empty; return; }
-                }
-                if (lowerName.Contains("obs") || lowerId.Contains("obs"))
-                {
-                    string obsPath = @"C:\Program Files\obs-studio\bin\64bit\obs64.exe";
-                    if (File.Exists(obsPath)) { Target = obsPath; Arguments = String.Empty; return; }
-                }
-                if (lowerName.Contains("spotify") || lowerId.Contains("spotify"))
-                {
-                    string spotPath = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), @"Spotify\Spotify.exe");
-                    if (File.Exists(spotPath)) { Target = spotPath; Arguments = String.Empty; return; }
-                }
-            }
-
-            if (!String.IsNullOrWhiteSpace(AppUserModelId) && (AppUserModelId.StartsWith("{") || AppUserModelId.Contains(":") || AppUserModelId.Contains("\\")))
-            {
-                if (File.Exists(Target))
-                {
-                    AppUserModelId = String.Empty;
-                }
-            }
-        }
-
-        public string Serialize()
-        {
-            return String.Format("{0}|{1}|{2}|{3}|{4}",
-                Escape(Name), Escape(Target), Escape(Arguments), Escape(AppUserModelId), Escape(Identity));
-        }
-
-        public static WorkspaceAppItem Deserialize(string raw)
-        {
-            if (String.IsNullOrWhiteSpace(raw)) return null;
-            string[] parts = raw.Split('|');
-            if (parts.Length == 0) return null;
-            var item = new WorkspaceAppItem
-            {
-                Name = Unescape(parts[0]),
-                Target = parts.Length > 1 ? Unescape(parts[1]) : String.Empty,
-                Arguments = parts.Length > 2 ? Unescape(parts[2]) : String.Empty,
-                AppUserModelId = parts.Length > 3 ? Unescape(parts[3]) : String.Empty,
-                Identity = parts.Length > 4 ? Unescape(parts[4]) : String.Empty
-            };
-            item.NormalizeExecutable();
-            return item;
-        }
-
-        private static string Escape(string s) { return Uri.EscapeDataString(s ?? String.Empty); }
-        private static string Unescape(string s) { try { return Uri.UnescapeDataString(s ?? String.Empty); } catch { return s ?? String.Empty; } }
-    }
-
-    internal sealed class DockWorkspace
-    {
-        public string Id;
-        public string Name;
-        public string Icon;
-        public bool IsolateWorkspace;
-        public bool SyncWithWindows;
-        public readonly List<WorkspaceAppItem> Apps = new List<WorkspaceAppItem>();
-
-        public DockWorkspace()
-        {
-            Id = Guid.NewGuid().ToString("N").Substring(0, 8);
-            Name = "Espaço";
-            Icon = "💼";
-            IsolateWorkspace = false;
-            SyncWithWindows = false;
-        }
-
-        public DockWorkspace(string id, string name, string icon, bool isolate = false, bool syncWithWindows = false)
-        {
-            Id = id;
-            Name = name;
-            Icon = icon;
-            IsolateWorkspace = isolate;
-            SyncWithWindows = syncWithWindows;
-        }
-    }
-
-    internal sealed class WorkspaceManager
-    {
-        public readonly List<DockWorkspace> Workspaces = new List<DockWorkspace>();
-        public int ActiveIndex = 0;
-        public bool WorkspacesEnabled = true;
-
-        public DockWorkspace ActiveWorkspace
-        {
-            get
-            {
-                if (Workspaces.Count == 0) return null;
-                if (ActiveIndex < 0 || ActiveIndex >= Workspaces.Count) ActiveIndex = 0;
-                return Workspaces[ActiveIndex];
-            }
-        }
-
-        private static string WorkspacesFilePath
-        {
-            get
-            {
-                string dir = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "BMFlow");
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                return System.IO.Path.Combine(dir, "workspaces.ini");
-            }
-        }
-
-        public void Save()
-        {
-            try
-            {
-                string file = WorkspacesFilePath;
-                var lines = new List<string>();
-                lines.Add("# B.M Flow Workspaces configuration");
-                lines.Add("ActiveIndex=" + ActiveIndex.ToString(CultureInfo.InvariantCulture));
-                lines.Add("WorkspacesEnabled=" + WorkspacesEnabled.ToString());
-                lines.Add("Count=" + Workspaces.Count.ToString(CultureInfo.InvariantCulture));
-                for (int i = 0; i < Workspaces.Count; i++)
-                {
-                    var ws = Workspaces[i];
-                    lines.Add(String.Format("[Workspace_{0}]", i));
-                    lines.Add("Id=" + ws.Id);
-                    lines.Add("Name=" + ws.Name);
-                    lines.Add("Icon=" + ws.Icon);
-                    lines.Add("Isolate=" + ws.IsolateWorkspace.ToString());
-                    lines.Add("SyncWithWindows=" + ws.SyncWithWindows.ToString());
-                    lines.Add("AppCount=" + ws.Apps.Count.ToString(CultureInfo.InvariantCulture));
-                    for (int a = 0; a < ws.Apps.Count; a++)
-                    {
-                        lines.Add(String.Format("App_{0}={1}", a, ws.Apps[a].Serialize()));
-                    }
-                }
-                File.WriteAllLines(file, lines, Encoding.UTF8);
-            }
-            catch { }
-        }
-
-        public void Load(DockWindow dock)
-        {
-            try
-            {
-                string file = WorkspacesFilePath;
-                if (!File.Exists(file))
-                {
-                    CreateDefaultWorkspaces(dock);
-                    Save();
-                    return;
-                }
-
-                var lines = File.ReadAllLines(file, Encoding.UTF8);
-                Workspaces.Clear();
-                DockWorkspace currentWs = null;
-                int activeIdx = 0;
-                bool enabled = true;
-
-                foreach (var rawLine in lines)
-                {
-                    string line = (rawLine ?? String.Empty).Trim();
-                    if (line.StartsWith("#") || String.IsNullOrWhiteSpace(line)) continue;
-
-                    if (line.StartsWith("[") && line.EndsWith("]"))
-                    {
-                        if (currentWs != null) Workspaces.Add(currentWs);
-                        currentWs = new DockWorkspace();
-                        continue;
-                    }
-
-                    int eq = line.IndexOf('=');
-                    if (eq <= 0) continue;
-                    string key = line.Substring(0, eq).Trim();
-                    string val = line.Substring(eq + 1).Trim();
-
-                    if (currentWs == null)
-                    {
-                        if (key.Equals("ActiveIndex", StringComparison.OrdinalIgnoreCase))
-                        {
-                            int.TryParse(val, NumberStyles.Integer, CultureInfo.InvariantCulture, out activeIdx);
-                        }
-                        else if (key.Equals("WorkspacesEnabled", StringComparison.OrdinalIgnoreCase))
-                        {
-                            bool.TryParse(val, out enabled);
-                        }
-                    }
-                    else
-                    {
-                        if (key.Equals("Id", StringComparison.OrdinalIgnoreCase)) currentWs.Id = val;
-                        else if (key.Equals("Name", StringComparison.OrdinalIgnoreCase)) currentWs.Name = val;
-                        else if (key.Equals("Icon", StringComparison.OrdinalIgnoreCase)) currentWs.Icon = val;
-                        else if (key.Equals("Isolate", StringComparison.OrdinalIgnoreCase))
-                        {
-                            bool iso;
-                            if (bool.TryParse(val, out iso)) currentWs.IsolateWorkspace = iso;
-                        }
-                        else if (key.Equals("SyncWithWindows", StringComparison.OrdinalIgnoreCase))
-                        {
-                            bool sync;
-                            if (bool.TryParse(val, out sync)) currentWs.SyncWithWindows = sync;
-                        }
-                        else if (key.StartsWith("App_", StringComparison.OrdinalIgnoreCase))
-                        {
-                            var app = WorkspaceAppItem.Deserialize(val);
-                            if (app != null) currentWs.Apps.Add(app);
-                        }
-                    }
-                }
-
-                if (currentWs != null) Workspaces.Add(currentWs);
-
-                if (Workspaces.Count == 0)
-                {
-                    CreateDefaultWorkspaces(dock);
-                    Save();
-                    return;
-                }
-
-                // Garante que o espaço Padrão (que puxa os apps da barra original do Windows) esteja presente
-                if (!Workspaces.Any(w => String.Equals(w.Id, "default", StringComparison.OrdinalIgnoreCase) || w.SyncWithWindows))
-                {
-                    var wsDefault = new DockWorkspace("default", "Padrão", "🪟", false, true);
-                    Workspaces.Insert(0, wsDefault);
-                    activeIdx = 0;
-                    Save();
-                }
-
-                ActiveIndex = Math.Max(0, Math.Min(activeIdx, Workspaces.Count - 1));
-                WorkspacesEnabled = enabled;
-            }
-            catch
-            {
-                if (Workspaces.Count == 0) CreateDefaultWorkspaces(dock);
-            }
-        }
-
-        private void CreateDefaultWorkspaces(DockWindow dock)
-        {
-            Workspaces.Clear();
-
-            var wsDefault = new DockWorkspace("default", "Padrão", "🪟", false, true);
-            var wsWork = new DockWorkspace("work", "Trabalho", "💼");
-            var wsStudy = new DockWorkspace("study", "Estudo", "📚");
-            var wsGames = new DockWorkspace("games", "Jogos", "🎮");
-
-            // 1. Trabalho: se houver atalhos fixados atualmente na barra, importa-os!
-            if (dock != null)
-            {
-                var pinnedInitial = dock.GetInitialPinnedForWorkspace();
-                if (pinnedInitial != null && pinnedInitial.Count > 0)
-                {
-                    wsWork.Apps.AddRange(pinnedInitial);
-                }
-            }
-
-            var installed = GetInstalledApplications();
-
-            // Se wsWork estiver vazio, busca apps de produtividade
-            if (wsWork.Apps.Count == 0)
-            {
-                AddAppIfFound(wsWork, installed, "Visual Studio Code", "Code");
-                AddAppIfFound(wsWork, installed, "Brave", "Google Chrome", "Microsoft Edge");
-                AddAppIfFound(wsWork, installed, "Terminal", "PowerShell", "Prompt de Comando");
-                AddAppIfFound(wsWork, installed, "Explorador de Arquivos", "File Explorer");
-            }
-
-            // 2. Estudo
-            AddAppIfFound(wsStudy, installed, "Microsoft Edge", "Brave", "Google Chrome");
-            AddAppIfFound(wsStudy, installed, "OneNote", "Bloco de Notas", "Notepad");
-            AddAppIfFound(wsStudy, installed, "Calculadora", "Calculator");
-            AddAppIfFound(wsStudy, installed, "Word", "Documentos");
-
-            // 3. Jogos
-            AddAppIfFound(wsGames, installed, "Steam");
-            AddAppIfFound(wsGames, installed, "Discord");
-            AddAppIfFound(wsGames, installed, "OBS Studio", "OBS");
-            AddAppIfFound(wsGames, installed, "Spotify");
-
-            Workspaces.Add(wsDefault);
-            Workspaces.Add(wsWork);
-            Workspaces.Add(wsStudy);
-            Workspaces.Add(wsGames);
-            ActiveIndex = 0;
-            WorkspacesEnabled = true;
-        }
-
-        private static void AddAppIfFound(DockWorkspace ws, List<WorkspaceAppItem> catalog, params string[] names)
-        {
-            if (catalog == null) return;
-            foreach (var n in names)
-            {
-                var match = catalog.FirstOrDefault(a => (a.Name ?? "").IndexOf(n, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                                                        (a.Target ?? "").IndexOf(n, StringComparison.OrdinalIgnoreCase) >= 0);
-                if (match != null && !ws.Apps.Any(a => String.Equals(a.Name, match.Name, StringComparison.OrdinalIgnoreCase)))
-                {
-                    ws.Apps.Add(new WorkspaceAppItem
-                    {
-                        Name = match.Name,
-                        Target = match.Target,
-                        Arguments = match.Arguments,
-                        AppUserModelId = match.AppUserModelId,
-                        Identity = match.Identity
-                    });
-                    return;
-                }
-            }
-        }
-
-        private static List<WorkspaceAppItem> cachedInstalledApps;
-        private static DateTime cachedInstalledAppsExpires = DateTime.MinValue;
-
-        public static List<WorkspaceAppItem> GetInstalledApplications()
-        {
-            if (cachedInstalledApps != null && DateTime.UtcNow < cachedInstalledAppsExpires)
-                return cachedInstalledApps;
-
-            var list = new List<WorkspaceAppItem>();
-            var seenKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            // 1. Packaged Apps
-            try
-            {
-                var packaged = DockWindow.ReadPackagedAppsPublic();
-                foreach (var p in packaged)
-                {
-                    if (String.IsNullOrWhiteSpace(p.Name) || IsNoiseAppName(p.Name)) continue;
-                    string key = "pkg:" + (p.AppUserModelId ?? p.Identity ?? p.Name);
-                    if (!seenKeys.Contains(key))
-                    {
-                        seenKeys.Add(key);
-                        list.Add(new WorkspaceAppItem
-                        {
-                            Name = p.Name,
-                            Target = p.Target ?? "explorer.exe",
-                            Arguments = p.Arguments,
-                            AppUserModelId = p.AppUserModelId ?? p.Identity,
-                            Identity = p.Identity
-                        });
-                    }
-                }
-            }
-            catch { }
-
-            // 2. Start Menu Shortcuts
-            foreach (string folder in new[]
-            {
-                Environment.GetFolderPath(Environment.SpecialFolder.StartMenu),
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonStartMenu)
-            })
-            {
-                if (String.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder)) continue;
-                try
-                {
-                    foreach (string lnk in Directory.GetFiles(folder, "*.lnk", SearchOption.AllDirectories))
-                    {
-                        string name = System.IO.Path.GetFileNameWithoutExtension(lnk);
-                        if (IsNoiseAppName(name)) continue;
-
-                        var resolved = DockWindow.ResolveShortcutPublic(lnk);
-                        if (resolved != null && !String.IsNullOrWhiteSpace(resolved.Target))
-                        {
-                            if (IsNoiseAppTarget(resolved.Target)) continue;
-                            string key = resolved.Target.ToLowerInvariant();
-                            if (!seenKeys.Contains(key) && !seenKeys.Contains("name:" + name.ToLowerInvariant()))
-                            {
-                                seenKeys.Add(key);
-                                seenKeys.Add("name:" + name.ToLowerInvariant());
-                                list.Add(new WorkspaceAppItem
-                                {
-                                    Name = String.IsNullOrWhiteSpace(resolved.Name) ? name : resolved.Name,
-                                    Target = resolved.Target,
-                                    Arguments = resolved.Arguments
-                                });
-                            }
-                        }
-                    }
-                }
-                catch { }
-            }
-
-            var result = list.OrderBy(a => a.Name).ToList();
-            cachedInstalledApps = result;
-            cachedInstalledAppsExpires = DateTime.UtcNow.AddMinutes(10);
-            return result;
-        }
-
-        private static bool IsNoiseAppName(string name)
-        {
-            if (String.IsNullOrWhiteSpace(name)) return true;
-            string n = name.ToLowerInvariant();
-            return n.Contains("uninstall") || n.Contains("desinstalar") ||
-                   n.Contains("readme") || n.Contains("leia-me") ||
-                   n.Contains("help") || n.Contains("ajuda") ||
-                   n.Contains("manual") || n.Contains("documentation") ||
-                   n.Contains("license") || n.Contains("licença") ||
-                   n.Contains("release notes") || n.Contains("web site") ||
-                   n.Contains("guia do usuário") || n.EndsWith(".url");
-        }
-
-        private static bool IsNoiseAppTarget(string target)
-        {
-            if (String.IsNullOrWhiteSpace(target)) return true;
-            string t = target.ToLowerInvariant();
-            return t.EndsWith(".url") || t.Contains("unins") || t.Contains("setup") || t.Contains("installer");
-        }
-    }
-
-    internal sealed class WorkspaceHudWindow : Window
-    {
-        private static WorkspaceHudWindow activeHud;
-        private readonly DispatcherTimer fadeTimer;
-        private readonly TextBlock iconBlock;
-        private readonly TextBlock titleBlock;
-        private readonly TextBlock subBlock;
-
-        public WorkspaceHudWindow()
-        {
-            WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            Background = Brushes.Transparent;
-            Topmost = true;
-            ShowInTaskbar = false;
-            Focusable = false;
-            IsHitTestVisible = false;
-            SizeToContent = SizeToContent.WidthAndHeight;
-            WindowStartupLocation = WindowStartupLocation.Manual;
-
-            var border = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(235, 28, 28, 32)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(80, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(16),
-                Padding = new Thickness(22, 14, 26, 14),
-                Effect = new DropShadowEffect
-                {
-                    BlurRadius = 24,
-                    ShadowDepth = 6,
-                    Opacity = 0.5,
-                    Color = Colors.Black
-                }
-            };
-
-            var sp = new StackPanel { Orientation = Orientation.Horizontal };
-            iconBlock = new TextBlock
-            {
-                FontSize = 32,
-                VerticalAlignment = VerticalAlignment.Center,
-                Margin = new Thickness(0, 0, 16, 0)
-            };
-            sp.Children.Add(iconBlock);
-
-            var textPanel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            titleBlock = new TextBlock
-            {
-                FontSize = 17,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White
-            };
-            textPanel.Children.Add(titleBlock);
-
-            subBlock = new TextBlock
-            {
-                FontSize = 12,
-                Foreground = new SolidColorBrush(Color.FromRgb(180, 180, 185)),
-                Margin = new Thickness(0, 2, 0, 0)
-            };
-            textPanel.Children.Add(subBlock);
-
-            sp.Children.Add(textPanel);
-            border.Child = sp;
-            Content = border;
-
-            fadeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(1300) };
-            fadeTimer.Tick += delegate
-            {
-                fadeTimer.Stop();
-                var anim = new DoubleAnimation(1, 0, new Duration(TimeSpan.FromMilliseconds(250)));
-                anim.Completed += delegate { Close(); if (activeHud == this) activeHud = null; };
-                BeginAnimation(OpacityProperty, anim);
-            };
-        }
-
-        public static void ShowHud(string icon, string title, string subtitle, double dockLeft, double dockWidth, double dockTop)
-        {
-            if (activeHud != null)
-            {
-                try { activeHud.Close(); } catch { }
-                activeHud = null;
-            }
-
-            var hud = new WorkspaceHudWindow();
-            activeHud = hud;
-            hud.iconBlock.Text = icon;
-            hud.titleBlock.Text = title;
-            hud.subBlock.Text = subtitle;
-
-            hud.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double w = hud.DesiredSize.Width > 0 ? hud.DesiredSize.Width : 220;
-            double h = hud.DesiredSize.Height > 0 ? hud.DesiredSize.Height : 70;
-
-            hud.Left = dockLeft + (dockWidth - w) / 2;
-            hud.Top = Math.Max(40, dockTop - h - 25);
-            hud.Opacity = 0;
-            hud.Show();
-
-            var anim = new DoubleAnimation(0, 1, new Duration(TimeSpan.FromMilliseconds(150)));
-            hud.BeginAnimation(OpacityProperty, anim);
-            hud.fadeTimer.Start();
-        }
-    }
-
-    internal sealed class DesktopWidgetWindow : Window
-    {
-        private readonly DockWindow ownerDock;
-        private readonly DispatcherTimer timer;
-        private readonly TextBlock timeBlock;
-        private readonly TextBlock dayBlock;
-        private readonly TextBlock dateBlock;
-        private readonly StackPanel textStack;
-        private readonly Border rootBorder;
-        private readonly ScaleTransform scaleTransform;
-
-        private bool isLocked;
-        private bool showSeconds;
-        private bool use24Hour;
-        private string currentLanguage;
-        private string currentTheme;
-        private double currentScale;
-
-        public bool IsLocked { get { return isLocked; } }
-        public bool ShowSeconds { get { return showSeconds; } }
-        public bool Use24Hour { get { return use24Hour; } }
-        public string CurrentLanguage { get { return currentLanguage; } }
-        public string CurrentTheme { get { return currentTheme; } }
-        public double CurrentScale { get { return currentScale; } }
-
-        public DesktopWidgetWindow(DockWindow owner, double initialX, double initialY, bool locked, bool seconds, bool h24, string language, string theme, double scale)
-        {
-            ownerDock = owner;
-            isLocked = locked;
-            showSeconds = seconds;
-            use24Hour = h24;
-            currentLanguage = String.IsNullOrWhiteSpace(language) ? "Inglês" : language;
-            currentTheme = String.IsNullOrWhiteSpace(theme) ? "Ciano da Referência" : theme;
-            currentScale = scale > 0.4 ? scale : 1.0;
-
-            WindowStyle = WindowStyle.None;
-            AllowsTransparency = true;
-            Background = Brushes.Transparent;
-            ShowInTaskbar = false;
-            Topmost = false;
-            SizeToContent = SizeToContent.WidthAndHeight;
-            WindowStartupLocation = WindowStartupLocation.Manual;
-            Focusable = false;
-
-            TextOptions.SetTextRenderingMode(this, TextRenderingMode.ClearType);
-            TextOptions.SetTextFormattingMode(this, TextFormattingMode.Display);
-
-            scaleTransform = new ScaleTransform(currentScale, currentScale);
-
-            var fontFamily = new FontFamily("Century Gothic, Segoe UI Light, Segoe UI Variable Display, Aptos Light, Segoe UI, sans-serif");
-
-            timeBlock = new TextBlock
-            {
-                FontSize = 24,
-                FontFamily = fontFamily,
-                FontWeight = FontWeights.Normal,
-                HorizontalAlignment = HorizontalAlignment.Left,
-                Margin = new Thickness(6, 0, 0, 0)
-            };
-
-            dayBlock = new TextBlock
-            {
-                FontSize = 74,
-                FontFamily = fontFamily,
-                FontWeight = FontWeights.Normal,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                Margin = new Thickness(0, -8, 0, -8)
-            };
-
-            dateBlock = new TextBlock
-            {
-                FontSize = 26,
-                FontFamily = fontFamily,
-                FontWeight = FontWeights.Normal,
-                HorizontalAlignment = HorizontalAlignment.Right,
-                Margin = new Thickness(0, 0, 6, 0)
-            };
-
-            textStack = new StackPanel
-            {
-                Orientation = Orientation.Vertical,
-                ClipToBounds = false,
-                HorizontalAlignment = HorizontalAlignment.Left
-            };
-            textStack.Children.Add(timeBlock);
-            textStack.Children.Add(dayBlock);
-            textStack.Children.Add(dateBlock);
-
-            rootBorder = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(1, 0, 0, 0)),
-                Padding = new Thickness(16),
-                ClipToBounds = false,
-                Child = textStack,
-                Cursor = isLocked ? Cursors.Arrow : Cursors.SizeAll,
-                LayoutTransform = scaleTransform
-            };
-
-            Content = rootBorder;
-
-            ApplyThemeAndColors();
-            UpdateTimeDisplay();
-
-            timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(500) };
-            timer.Tick += delegate { UpdateTimeDisplay(); };
-            timer.Start();
-
-            rootBorder.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs e)
-            {
-                if (e.ButtonState == MouseButtonState.Pressed && !isLocked)
-                {
-                    try
-                    {
-                        DragMove();
-                        SavePosition();
-                    }
-                    catch { }
-                }
-            };
-
-            rootBorder.ContextMenuOpening += delegate { rootBorder.ContextMenu = BuildContextMenu(); };
-
-            if (double.IsNaN(initialX) || double.IsNaN(initialY))
-            {
-                Left = Math.Max(40, SystemParameters.WorkArea.Right - 440);
-                Top = Math.Max(40, SystemParameters.WorkArea.Top + 80);
-            }
-            else
-            {
-                Left = initialX;
-                Top = initialY;
-            }
-        }
-
-        public void ApplyThemeAndColors()
-        {
-            SolidColorBrush primaryBrush;
-            SolidColorBrush secondaryBrush;
-            DropShadowEffect shadow;
-
-            if (currentTheme == "Ciano da Referência")
-            {
-                primaryBrush = new SolidColorBrush(Color.FromRgb(20, 95, 105));
-                secondaryBrush = new SolidColorBrush(Color.FromRgb(158, 216, 219));
-                shadow = new DropShadowEffect
-                {
-                    BlurRadius = 10,
-                    ShadowDepth = 1.5,
-                    Opacity = 0.35,
-                    Color = Color.FromRgb(0, 40, 45),
-                    Direction = 315
-                };
-            }
-            else if (currentTheme == "Ciano Vibrante")
-            {
-                primaryBrush = new SolidColorBrush(Color.FromRgb(14, 230, 210));
-                secondaryBrush = new SolidColorBrush(Color.FromRgb(212, 250, 246));
-                shadow = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.5, Color = Colors.Black, Direction = 315 };
-            }
-            else if (currentTheme == "Branco Minimalista")
-            {
-                primaryBrush = Brushes.White;
-                secondaryBrush = new SolidColorBrush(Color.FromArgb(215, 255, 255, 255));
-                shadow = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.55, Color = Colors.Black, Direction = 315 };
-            }
-            else if (currentTheme == "Escuro Elegante")
-            {
-                primaryBrush = new SolidColorBrush(Color.FromRgb(26, 29, 32));
-                secondaryBrush = new SolidColorBrush(Color.FromRgb(95, 105, 117));
-                shadow = new DropShadowEffect { BlurRadius = 10, ShadowDepth = 1, Opacity = 0.4, Color = Color.FromArgb(100, 255, 255, 255), Direction = 315 };
-            }
-            else if (currentTheme == "Neon Synthwave")
-            {
-                primaryBrush = new SolidColorBrush(Color.FromRgb(255, 112, 166));
-                secondaryBrush = new SolidColorBrush(Color.FromRgb(112, 214, 255));
-                shadow = new DropShadowEffect { BlurRadius = 14, ShadowDepth = 2, Opacity = 0.6, Color = Colors.Black, Direction = 315 };
-            }
-            else // "Âmbar Dourado"
-            {
-                primaryBrush = new SolidColorBrush(Color.FromRgb(255, 183, 3));
-                secondaryBrush = new SolidColorBrush(Color.FromRgb(251, 133, 0));
-                shadow = new DropShadowEffect { BlurRadius = 12, ShadowDepth = 2, Opacity = 0.5, Color = Colors.Black, Direction = 315 };
-            }
-
-            dayBlock.Foreground = primaryBrush;
-            timeBlock.Foreground = secondaryBrush;
-            dateBlock.Foreground = secondaryBrush;
-            textStack.Effect = shadow;
-        }
-
-        public void UpdateTimeDisplay()
-        {
-            DateTime now = DateTime.Now;
-
-            string timePattern = showSeconds
-                ? (use24Hour ? "HH:mm:ss" : "hh:mm:ss")
-                : (use24Hour ? "HH:mm" : "hh:mm");
-            timeBlock.Text = now.ToString(timePattern, CultureInfo.InvariantCulture);
-
-            if (currentLanguage == "Português")
-            {
-                var ci = new CultureInfo("pt-BR");
-                string rawDay = now.ToString("dddd", ci);
-                dayBlock.Text = char.ToUpper(rawDay[0]) + rawDay.Substring(1);
-
-                string rawMonth = now.ToString("MMMM", ci);
-                string monthCap = char.ToUpper(rawMonth[0]) + rawMonth.Substring(1);
-                dateBlock.Text = monthCap + "  |  " + now.ToString("dd");
-            }
-            else
-            {
-                var ci = new CultureInfo("en-US");
-                string rawDay = now.ToString("dddd", ci);
-                dayBlock.Text = rawDay;
-
-                string rawMonth = now.ToString("MMMM", ci);
-                dateBlock.Text = rawMonth + "  |  " + now.ToString("dd");
-            }
-        }
-
-        private ContextMenu BuildContextMenu()
-        {
-            var menu = new ContextMenu();
-
-            var lockItem = new MenuItem { Header = "Bloquear posição", IsCheckable = true, IsChecked = isLocked };
-            lockItem.Click += delegate { SetLocked(lockItem.IsChecked); };
-            menu.Items.Add(lockItem);
-
-            var secItem = new MenuItem { Header = "Exibir segundos", IsCheckable = true, IsChecked = showSeconds };
-            secItem.Click += delegate { SetShowSeconds(secItem.IsChecked); };
-            menu.Items.Add(secItem);
-
-            var h24Item = new MenuItem { Header = "Formato 24 horas", IsCheckable = true, IsChecked = use24Hour };
-            h24Item.Click += delegate { Set24Hour(h24Item.IsChecked); };
-            menu.Items.Add(h24Item);
-
-            menu.Items.Add(new Separator());
-
-            var langMenu = new MenuItem { Header = "Idioma" };
-            var enItem = new MenuItem { Header = "Inglês (Tuesday / June | 06)", IsCheckable = true, IsChecked = currentLanguage == "Inglês" };
-            enItem.Click += delegate { SetLanguage("Inglês"); };
-            var ptItem = new MenuItem { Header = "Português (Terça-feira / Junho | 06)", IsCheckable = true, IsChecked = currentLanguage == "Português" };
-            ptItem.Click += delegate { SetLanguage("Português"); };
-            langMenu.Items.Add(enItem);
-            langMenu.Items.Add(ptItem);
-            menu.Items.Add(langMenu);
-
-            var themeMenu = new MenuItem { Header = "Estilo de Cor" };
-            foreach (string t in new[] { "Ciano da Referência", "Ciano Vibrante", "Branco Minimalista", "Escuro Elegante", "Neon Synthwave", "Âmbar Dourado" })
-            {
-                string th = t;
-                var item = new MenuItem { Header = th, IsCheckable = true, IsChecked = currentTheme == th };
-                item.Click += delegate { SetTheme(th); };
-                themeMenu.Items.Add(item);
-            }
-            menu.Items.Add(themeMenu);
-
-            var scaleMenu = new MenuItem { Header = "Tamanho" };
-            var scales = new Tuple<string, double>[]
-            {
-                Tuple.Create("Pequeno (80%)", 0.8),
-                Tuple.Create("Normal (100%)", 1.0),
-                Tuple.Create("Grande (125%)", 1.25),
-                Tuple.Create("Extra Grande (150%)", 1.5)
-            };
-            foreach (var s in scales)
-            {
-                var tuple = s;
-                var item = new MenuItem { Header = tuple.Item1, IsCheckable = true, IsChecked = Math.Abs(currentScale - tuple.Item2) < 0.05 };
-                item.Click += delegate { SetScale(tuple.Item2); };
-                scaleMenu.Items.Add(item);
-            }
-            menu.Items.Add(scaleMenu);
-
-            menu.Items.Add(new Separator());
-
-            var resetPos = new MenuItem { Header = "Centralizar na tela" };
-            resetPos.Click += delegate { CenterOnScreen(); };
-            menu.Items.Add(resetPos);
-
-            var configItem = new MenuItem { Header = "Configurações do B.M Flow…" };
-            configItem.Click += delegate { ownerDock.OpenSettingsWindow("widgets"); };
-            menu.Items.Add(configItem);
-
-            menu.Items.Add(new Separator());
-
-            var hideItem = new MenuItem { Header = "Ocultar Widget" };
-            hideItem.Click += delegate { ownerDock.SetShowDesktopWidget(false); };
-            menu.Items.Add(hideItem);
-
-            return menu;
-        }
-
-        public void SetLocked(bool locked)
-        {
-            isLocked = locked;
-            rootBorder.Cursor = isLocked ? Cursors.Arrow : Cursors.SizeAll;
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void SetShowSeconds(bool seconds)
-        {
-            showSeconds = seconds;
-            UpdateTimeDisplay();
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void Set24Hour(bool h24)
-        {
-            use24Hour = h24;
-            UpdateTimeDisplay();
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void SetLanguage(string lang)
-        {
-            currentLanguage = lang;
-            UpdateTimeDisplay();
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void SetTheme(string theme)
-        {
-            currentTheme = theme;
-            ApplyThemeAndColors();
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void SetScale(double scale)
-        {
-            currentScale = Math.Max(0.5, Math.Min(2.5, scale));
-            scaleTransform.ScaleX = currentScale;
-            scaleTransform.ScaleY = currentScale;
-            ownerDock.NotifyWidgetChanged();
-        }
-
-        public void CenterOnScreen()
-        {
-            double w = ActualWidth > 0 ? ActualWidth * currentScale : 300 * currentScale;
-            double h = ActualHeight > 0 ? ActualHeight * currentScale : 150 * currentScale;
-            Left = (SystemParameters.WorkArea.Width - w) / 2 + SystemParameters.WorkArea.Left;
-            Top = (SystemParameters.WorkArea.Height - h) / 2 + SystemParameters.WorkArea.Top;
-            SavePosition();
-        }
-
-        public void SavePosition()
-        {
-            ownerDock.SetWidgetPosition(Left, Top);
-        }
-    }
-
-    internal sealed class DockMascot
-    {
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool GetSystemTimes(out System.Runtime.InteropServices.ComTypes.FILETIME idleTime, out System.Runtime.InteropServices.ComTypes.FILETIME kernelTime, out System.Runtime.InteropServices.ComTypes.FILETIME userTime);
-
-        private static ulong FileTimeToUInt64(System.Runtime.InteropServices.ComTypes.FILETIME ft)
-        {
-            return ((ulong)(uint)ft.dwHighDateTime << 32) | (uint)ft.dwLowDateTime;
-        }
-
-        private readonly DockWindow ownerDock;
-        private readonly Canvas mascotCanvas;
-        private readonly Border dockShell;
-        private readonly Grid mascotHost;
-        private readonly System.Windows.Controls.Image mascotImage;
-        private readonly Border speechBubble;
-        private readonly TextBlock speechText;
-        private readonly ScaleTransform scaleTransform;
-        private readonly TranslateTransform translateTransform;
-        private readonly TransformGroup transformGroup;
-        private readonly DispatcherTimer animTimer;
-        private readonly DispatcherTimer bubbleTimer;
-        private readonly DispatcherTimer jumpTimer;
-
-        private bool enabled = true;
-        private string mascotType = "CatBlack";
-        private string mascotMode = "PatrolRight";
-        private double mascotScale = 1.0;
-
-        private double posX = 0;
-        private double posY = 0;
-        private int direction = -1; // -1 = facing left (as in reference image), +1 = facing right
-        private string state = "Walk"; // Walk, Idle, Sleep, Jump
-        private int stateTicks = 0;
-        private int walkFrameIndex = 0;
-        private int idleFrameIndex = 0;
-        private int sleepFrameIndex = 0;
-        private int jumpStep = 0;
-        private bool isHovered = false;
-        private readonly Random rand = new Random();
-
-        // CPU tracking for RunCat mode
-        private ulong lastIdleTime;
-        private ulong lastKernelTime;
-        private ulong lastUserTime;
-        private DateTime lastCpuCheck = DateTime.MinValue;
-        private double cachedCpuPercent = 10.0;
-
-        // Cached frames
-        private BitmapSource[] walkFrames;
-        private BitmapSource[] idleFrames;
-        private BitmapSource[] sleepFrames;
-        private BitmapSource[] jumpFrames;
-        private bool defaultFacingRight = false;
-
-        public DockMascot(DockWindow owner, Canvas canvas, Border shell, bool isEnabled, string type, string mode, double scale)
-        {
-            ownerDock = owner;
-            mascotCanvas = canvas;
-            dockShell = shell;
-            enabled = isEnabled;
-            mascotType = type ?? "CatBlack";
-            mascotMode = mode ?? "PatrolRight";
-            mascotScale = scale;
-
-            scaleTransform = new ScaleTransform(1.0, 1.0);
-            translateTransform = new TranslateTransform(0, 0);
-            transformGroup = new TransformGroup();
-            transformGroup.Children.Add(scaleTransform);
-            transformGroup.Children.Add(translateTransform);
-
-            mascotHost = new Grid
-            {
-                Width = 48,
-                Height = 32,
-                ClipToBounds = false,
-                RenderTransform = transformGroup,
-                RenderTransformOrigin = new Point(0.5, 1.0),
-                Cursor = Cursors.Hand
-            };
-
-            mascotImage = new System.Windows.Controls.Image
-            {
-                Width = 48,
-                Height = 32,
-                SnapsToDevicePixels = true
-            };
-            RenderOptions.SetBitmapScalingMode(mascotImage, BitmapScalingMode.NearestNeighbor);
-            mascotHost.Children.Add(mascotImage);
-
-            speechText = new TextBlock
-            {
-                FontSize = 11,
-                FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White,
-                HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-
-            speechBubble = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(230, 26, 28, 35)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(90, 255, 255, 255)),
-                BorderThickness = new Thickness(1),
-                CornerRadius = new CornerRadius(8),
-                Padding = new Thickness(7, 3, 7, 3),
-                Effect = new DropShadowEffect { Color = Colors.Black, BlurRadius = 8, ShadowDepth = 2, Opacity = 0.45 },
-                Visibility = Visibility.Collapsed,
-                IsHitTestVisible = false,
-                Child = speechText
-            };
-
-            mascotHost.MouseEnter += delegate { isHovered = true; };
-            mascotHost.MouseLeave += delegate { isHovered = false; };
-            mascotHost.MouseLeftButtonDown += delegate (object s, MouseButtonEventArgs e)
-            {
-                PerformJumpAndReaction();
-                e.Handled = true;
-            };
-            mascotHost.MouseRightButtonDown += delegate (object s, MouseButtonEventArgs e)
-            {
-                ShowMascotContextMenu();
-                e.Handled = true;
-            };
-
-            mascotCanvas.Children.Add(mascotHost);
-            mascotCanvas.Children.Add(speechBubble);
-
-            // Mais quadros por segundo e deslocamento menor deixam a passada
-            // legível sem fazer o pixel-art parecer deslizar pela barra.
-            // DispatcherPriority.Normal garante cadência estável de 90ms mesmo quando
-            // prévias com DWM thumbnails e animações de renderização estão ativas na tela.
-            animTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(90) };
-            animTimer.Tick += OnAnimTick;
-
-            bubbleTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(1800) };
-            bubbleTimer.Tick += delegate
-            {
-                bubbleTimer.Stop();
-                speechBubble.Visibility = Visibility.Collapsed;
-            };
-
-            int[] hopOffsets = new int[] { -2, -5, -9, -12, -14, -14, -12, -9, -5, -2, 0 };
-            jumpTimer = new DispatcherTimer(DispatcherPriority.Normal) { Interval = TimeSpan.FromMilliseconds(55) };
-            jumpTimer.Tick += delegate
-            {
-                if (jumpFrames != null && jumpFrames.Length > 0)
-                {
-                    translateTransform.Y = 0;
-                    if (jumpStep < jumpFrames.Length)
-                    {
-                        mascotImage.Source = jumpFrames[jumpStep++];
-                    }
-                    else
-                    {
-                        jumpTimer.Stop();
-                        if (state == "Jump") state = mascotMode == "Sleep" ? "Sleep" : "Walk";
-                        if (walkFrames != null && walkFrames.Length > 0)
-                            mascotImage.Source = walkFrames[0];
-                    }
-                }
-                else
-                {
-                    if (jumpStep < hopOffsets.Length)
-                    {
-                        translateTransform.Y = hopOffsets[jumpStep++];
-                    }
-                    else
-                    {
-                        jumpTimer.Stop();
-                        translateTransform.Y = 0;
-                        if (state == "Jump") state = mascotMode == "Sleep" ? "Sleep" : "Walk";
-                    }
-                }
-            };
-
-            ReloadSprites();
-            UpdateVisibility();
-        }
-
-        private void UpdateBubblePosition()
-        {
-            if (speechBubble == null || speechBubble.Visibility != Visibility.Visible) return;
-            speechBubble.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
-            double bw = speechBubble.DesiredSize.Width > 0 ? speechBubble.DesiredSize.Width : 40.0;
-            double bh = speechBubble.DesiredSize.Height > 0 ? speechBubble.DesiredSize.Height : 22.0;
-            double hostW = (mascotImage.Width > 0 ? mascotImage.Width : 48.0) * mascotScale;
-            double baseH = (mascotImage.Height > 0 ? mascotImage.Height : 32.0);
-            double topOfMascot = posY - (baseH * (mascotScale - 1.0));
-            double bx = posX + (hostW / 2.0) - (bw / 2.0);
-            double by = topOfMascot - bh - 6.0;
-            Canvas.SetLeft(speechBubble, bx);
-            Canvas.SetTop(speechBubble, by);
-        }
-
-        public void Start()
-        {
-            if (enabled)
-            {
-                animTimer.Start();
-                NotifyLayoutUpdated();
-            }
-        }
-
-        public void Stop()
-        {
-            animTimer.Stop();
-            bubbleTimer.Stop();
-            jumpTimer.Stop();
-        }
-
-        public void SetEnabled(bool isEnabled)
-        {
-            enabled = isEnabled;
-            UpdateVisibility();
-            if (enabled)
-            {
-                animTimer.Start();
-                NotifyLayoutUpdated();
-            }
-            else
-            {
-                animTimer.Stop();
-                bubbleTimer.Stop();
-                jumpTimer.Stop();
-            }
-        }
-
-        public void SetType(string type)
-        {
-            mascotType = type;
-            ReloadSprites();
-            NotifyLayoutUpdated();
-        }
-
-        public void SetMode(string mode)
-        {
-            mascotMode = mode;
-            if (mascotMode != "RunCat")
-                animTimer.Interval = TimeSpan.FromMilliseconds(90);
-            if (mascotMode == "Sleep") state = "Sleep";
-            else if (state == "Sleep") state = "Walk";
-            NotifyLayoutUpdated();
-        }
-
-        public void SetScale(double scale)
-        {
-            mascotScale = scale;
-            double faceSign = defaultFacingRight ? (direction > 0 ? 1.0 : -1.0) : (direction < 0 ? 1.0 : -1.0);
-            scaleTransform.ScaleX = faceSign * mascotScale;
-            scaleTransform.ScaleY = mascotScale;
-            NotifyLayoutUpdated();
-        }
-
-        private void UpdateVisibility()
-        {
-            mascotHost.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
-            if (!enabled && speechBubble != null) speechBubble.Visibility = Visibility.Collapsed;
-        }
-
-        public void NotifyLayoutUpdated()
-        {
-            if (!enabled) return;
-            double rootW = ownerDock.ActualWidth;
-            double rootH = ownerDock.ActualHeight;
-            double dockH = ownerDock.DockShellActualHeight;
-            if (rootW < 50 || rootH < 50 || dockH < 30) return;
-
-            double dockLeft = 5.0;
-            double dockRight = rootW - 5.0;
-            double topEdgeY = rootH - dockH - 5.0;
-
-            double baseH = (mascotImage.Height > 0 ? mascotImage.Height : 32.0);
-            double spriteW = (mascotImage.Width > 0 ? mascotImage.Width : 48.0) * mascotScale;
-            posY = topEdgeY - baseH + 2.0;
-
-            double minX, maxX;
-            if (mascotMode == "PatrolRight" || mascotMode == "RunCat")
-            {
-                minX = Math.Max(dockLeft + 20, dockRight - 230);
-                maxX = Math.Max(minX + 40, dockRight - 130);
-            }
-            else if (mascotMode == "Sleep")
-            {
-                minX = Math.Max(dockLeft + 20, dockRight - 180);
-                maxX = minX;
-            }
-            else // Wander
-            {
-                minX = dockLeft + 25;
-                maxX = Math.Max(minX + 50, dockRight - spriteW - 25);
-            }
-
-            if (posX < minX || posX > maxX || posX == 0)
-            {
-                posX = (minX + maxX) / 2.0;
-            }
-
-            Canvas.SetLeft(mascotHost, posX);
-            Canvas.SetTop(mascotHost, posY);
-            UpdateBubblePosition();
-        }
-
-        private void OnAnimTick(object sender, EventArgs e)
-        {
-            if (!enabled || mascotHost.Visibility != Visibility.Visible) return;
-
-            double rootW = ownerDock.ActualWidth;
-            double rootH = ownerDock.ActualHeight;
-            double dockH = ownerDock.DockShellActualHeight;
-            if (rootW < 50 || rootH < 50 || dockH < 30) return;
-
-            double dockLeft = 5.0;
-            double dockRight = rootW - 5.0;
-            double topEdgeY = rootH - dockH - 5.0;
-            double baseH = (mascotImage.Height > 0 ? mascotImage.Height : 32.0);
-            double spriteW = (mascotImage.Width > 0 ? mascotImage.Width : 48.0) * mascotScale;
-            posY = topEdgeY - baseH + 2.0;
-
-            double minX, maxX;
-            if (mascotMode == "PatrolRight")
-            {
-                minX = Math.Max(dockLeft + 20, dockRight - 230);
-                maxX = Math.Max(minX + 40, dockRight - 130);
-            }
-            else if (mascotMode == "RunCat")
-            {
-                minX = Math.Max(dockLeft + 20, dockRight - 230);
-                maxX = Math.Max(minX + 40, dockRight - 130);
-
-                double cpu = GetCurrentCpuPercent();
-                int ms = (int)Math.Max(35, Math.Min(220, 220 - (cpu * 1.85)));
-                if (animTimer.Interval.TotalMilliseconds != ms)
-                    animTimer.Interval = TimeSpan.FromMilliseconds(ms);
-            }
-            else if (mascotMode == "Sleep")
-            {
-                minX = Math.Max(dockLeft + 20, dockRight - 180);
-                maxX = minX;
-                state = "Sleep";
-            }
-            else // Wander
-            {
-                minX = dockLeft + 25;
-                maxX = Math.Max(minX + 50, dockRight - spriteW - 25);
-            }
-
-            // State machine
-            if (state == "Sleep")
-            {
-                stateTicks++;
-                if (stateTicks % 5 == 0) sleepFrameIndex = (sleepFrameIndex + 1) % (sleepFrames != null && sleepFrames.Length > 0 ? sleepFrames.Length : 1);
-                if (sleepFrames != null && sleepFrames.Length > sleepFrameIndex)
-                    mascotImage.Source = sleepFrames[sleepFrameIndex];
-
-                if (stateTicks % 28 == 0 && speechBubble.Visibility != Visibility.Visible)
-                {
-                    speechText.Text = "Zzz... 💤";
-                    speechBubble.Visibility = Visibility.Visible;
-                    UpdateBubblePosition();
-                    bubbleTimer.Stop();
-                    bubbleTimer.Start();
-                }
-            }
-            else if (state == "Idle")
-            {
-                stateTicks--;
-                if (stateTicks % 8 == 0) idleFrameIndex = (idleFrameIndex + 1) % (idleFrames != null && idleFrames.Length > 0 ? idleFrames.Length : 1);
-                if (idleFrames != null && idleFrames.Length > idleFrameIndex)
-                    mascotImage.Source = idleFrames[idleFrameIndex];
-
-                if (stateTicks <= 0)
-                {
-                    state = "Walk";
-                    if (rand.Next(10) < 4) direction = -direction;
-                }
-            }
-            else if (state == "Walk")
-            {
-                if (isHovered)
-                {
-                    if (idleFrames != null && idleFrames.Length > 0)
-                        mascotImage.Source = idleFrames[0];
-                }
-                else
-                {
-                    walkFrameIndex = (walkFrameIndex + 1) % (walkFrames != null && walkFrames.Length > 0 ? walkFrames.Length : 1);
-                    if (walkFrames != null && walkFrames.Length > walkFrameIndex)
-                        mascotImage.Source = walkFrames[walkFrameIndex];
-
-                    posX += direction * (1.55 * mascotScale);
-
-                    if (direction > 0 && posX >= maxX)
-                    {
-                        posX = maxX;
-                        direction = -1;
-                        state = "Idle";
-                        stateTicks = rand.Next(15, 30);
-                    }
-                    else if (direction < 0 && posX <= minX)
-                    {
-                        posX = minX;
-                        direction = 1;
-                        state = "Idle";
-                        stateTicks = rand.Next(15, 30);
-                    }
-                    else if (mascotMode != "RunCat" && rand.Next(100) < 3)
-                    {
-                        state = "Idle";
-                        stateTicks = rand.Next(18, 32);
-                    }
-                }
-            }
-
-            double faceSign = defaultFacingRight ? (direction > 0 ? 1.0 : -1.0) : (direction < 0 ? 1.0 : -1.0);
-            scaleTransform.ScaleX = faceSign * mascotScale;
-            scaleTransform.ScaleY = mascotScale;
-
-            Canvas.SetLeft(mascotHost, posX);
-            Canvas.SetTop(mascotHost, posY);
-            if (speechBubble.Visibility == Visibility.Visible)
-                UpdateBubblePosition();
-        }
-
-        private void PerformJumpAndReaction()
-        {
-            jumpStep = 0;
-            state = "Jump";
-            if (jumpFrames != null && jumpFrames.Length > 0)
-                mascotImage.Source = jumpFrames[0];
-            jumpTimer.Start();
-
-            string reaction = PickReaction();
-            speechText.Text = reaction;
-            speechBubble.Visibility = Visibility.Visible;
-            UpdateBubblePosition();
-            bubbleTimer.Stop();
-            bubbleTimer.Start();
-        }
-
-        private string PickReaction()
-        {
-            if (mascotType == "Fox")
-            {
-                string[] foxes = new string[] { "Yip! 🦊", "❤️", "Awoo! ✨", "🦊🐾", "Kip! 🦊", "✨" };
-                return foxes[rand.Next(foxes.Length)];
-            }
-            if (mascotType.StartsWith("Cat"))
-            {
-                string[] cats = new string[] { "Miau! 🐾", "❤️", "Purr... ✨", "Meow! 🐱", "nya~ 🐾", "✨" };
-                return cats[rand.Next(cats.Length)];
-            }
-            if (mascotType == "Dog")
-            {
-                string[] dogs = new string[] { "Au au! 🐶", "❤️", "Woof! 🐾", "Latido! ✨", "🐾" };
-                return dogs[rand.Next(dogs.Length)];
-            }
-            string[] ducks = new string[] { "Quack! 🦆", "HONK! 🪿", "❤️", "Quack quack! ✨" };
-            return ducks[rand.Next(ducks.Length)];
-        }
-
-        private void ShowMascotContextMenu()
-        {
-            var menu = new ContextMenu();
-            menu.Background = new SolidColorBrush(Color.FromRgb(36, 33, 33));
-            menu.Foreground = Brushes.White;
-            menu.BorderBrush = new SolidColorBrush(Color.FromRgb(65, 59, 58));
-
-            var titleItem = new MenuItem { Header = "🐾 Mascote da Barra", IsEnabled = false, FontWeight = FontWeights.Bold, Foreground = new SolidColorBrush(Color.FromRgb(255, 120, 100)) };
-            menu.Items.Add(titleItem);
-            menu.Items.Add(new System.Windows.Controls.Separator());
-
-            var mascotsMenu = new MenuItem { Header = "Escolher Mascote" };
-            mascotsMenu.Items.Add(CreateCheckItem("🦊 Raposinha (Pixel Fox)", mascotType == "Fox", delegate { ownerDock.SetMascotType("Fox"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🐱 Gatinho Meia-Noite (Preto)", mascotType == "CatBlack", delegate { ownerDock.SetMascotType("CatBlack"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🐈 Gatinho Tigrão (Laranja)", mascotType == "CatOrange", delegate { ownerDock.SetMascotType("CatOrange"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🤍 Gatinho Neve (Branco)", mascotType == "CatWhite", delegate { ownerDock.SetMascotType("CatWhite"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🐧 Gatinho Frajola (Tuxedo)", mascotType == "CatTuxedo", delegate { ownerDock.SetMascotType("CatTuxedo"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🐶 Cachorrinho Caramelo", mascotType == "Dog", delegate { ownerDock.SetMascotType("Dog"); }));
-            mascotsMenu.Items.Add(CreateCheckItem("🦆 Gansinho / Pato", mascotType == "Duck", delegate { ownerDock.SetMascotType("Duck"); }));
-            menu.Items.Add(mascotsMenu);
-
-            var modesMenu = new MenuItem { Header = "Comportamento" };
-            modesMenu.Items.Add(CreateCheckItem("📍 Canto Direito (Acima da Lixeira)", mascotMode == "PatrolRight", delegate { ownerDock.SetMascotMode("PatrolRight"); }));
-            modesMenu.Items.Add(CreateCheckItem("🚶 Passear pela Barra toda", mascotMode == "Wander", delegate { ownerDock.SetMascotMode("Wander"); }));
-            modesMenu.Items.Add(CreateCheckItem("⚡ Ritmo pela CPU (RunCat)", mascotMode == "RunCat", delegate { ownerDock.SetMascotMode("RunCat"); }));
-            modesMenu.Items.Add(CreateCheckItem("💤 Dormir / Descansar", mascotMode == "Sleep", delegate { ownerDock.SetMascotMode("Sleep"); }));
-            menu.Items.Add(modesMenu);
-
-            var sizeMenu = new MenuItem { Header = "Tamanho" };
-            sizeMenu.Items.Add(CreateCheckItem("Pequeno (80%)", mascotScale <= 0.85, delegate { ownerDock.SetMascotScale(0.8); }));
-            sizeMenu.Items.Add(CreateCheckItem("Padrão (100%)", mascotScale > 0.85 && mascotScale < 1.15, delegate { ownerDock.SetMascotScale(1.0); }));
-            sizeMenu.Items.Add(CreateCheckItem("Médio (125%)", mascotScale >= 1.15 && mascotScale < 1.4, delegate { ownerDock.SetMascotScale(1.25); }));
-            sizeMenu.Items.Add(CreateCheckItem("Grande (150%)", mascotScale >= 1.4 && mascotScale < 1.7, delegate { ownerDock.SetMascotScale(1.5); }));
-            sizeMenu.Items.Add(CreateCheckItem("Extra Grande (180%)", mascotScale >= 1.7 && mascotScale < 2.05, delegate { ownerDock.SetMascotScale(1.8); }));
-            sizeMenu.Items.Add(CreateCheckItem("Gigante (220%)", mascotScale >= 2.05, delegate { ownerDock.SetMascotScale(2.2); }));
-            menu.Items.Add(sizeMenu);
-
-            menu.Items.Add(new System.Windows.Controls.Separator());
-
-            var petActionItem = new MenuItem { Header = "Fazer Carinho 💖" };
-            petActionItem.Click += delegate { PerformJumpAndReaction(); };
-            menu.Items.Add(petActionItem);
-
-            var settingsItem = new MenuItem { Header = "⚙️ Configurações…" };
-            settingsItem.Click += delegate { ownerDock.OpenSettingsWindow("widgets"); };
-            menu.Items.Add(settingsItem);
-
-            var hideItem = new MenuItem { Header = "❌ Ocultar Mascote" };
-            hideItem.Click += delegate { ownerDock.SetShowMascot(false); };
-            menu.Items.Add(hideItem);
-
-            menu.IsOpen = true;
-        }
-
-        private static MenuItem CreateCheckItem(string text, bool isChecked, RoutedEventHandler onClick)
-        {
-            var item = new MenuItem { Header = text, IsCheckable = true, IsChecked = isChecked };
-            item.Click += onClick;
-            return item;
-        }
-
-        private double GetCurrentCpuPercent()
-        {
-            if ((DateTime.UtcNow - lastCpuCheck).TotalMilliseconds < 800)
-                return cachedCpuPercent;
-
-            System.Runtime.InteropServices.ComTypes.FILETIME idleTime, kernelTime, userTime;
-            if (GetSystemTimes(out idleTime, out kernelTime, out userTime))
-            {
-                ulong idle = FileTimeToUInt64(idleTime);
-                ulong kernel = FileTimeToUInt64(kernelTime);
-                ulong user = FileTimeToUInt64(userTime);
-
-                if (lastKernelTime > 0)
-                {
-                    ulong deltaIdle = idle - lastIdleTime;
-                    ulong deltaKernel = kernel - lastKernelTime;
-                    ulong deltaUser = user - lastUserTime;
-                    ulong deltaTotal = deltaKernel + deltaUser;
-
-                    if (deltaTotal > 0)
-                    {
-                        double busy = 1.0 - ((double)deltaIdle / (double)deltaTotal);
-                        cachedCpuPercent = Math.Max(0.0, Math.Min(100.0, busy * 100.0));
-                    }
-                }
-
-                lastIdleTime = idle;
-                lastKernelTime = kernel;
-                lastUserTime = user;
-                lastCpuCheck = DateTime.UtcNow;
-            }
-            return cachedCpuPercent;
-        }
-
-        private static BitmapSource[] LoadCustomFrames(string dir, string prefix)
-        {
-            try
-            {
-                if (!Directory.Exists(dir)) return null;
-                string[] files = Directory.GetFiles(dir, prefix + "*.png");
-                if (files == null || files.Length == 0) return null;
-
-                var matching = new List<string>();
-                for (int i = 0; i < files.Length; i++)
-                {
-                    string f = files[i];
-                    string name = System.IO.Path.GetFileNameWithoutExtension(f);
-                    if (name.StartsWith(prefix + "_", StringComparison.OrdinalIgnoreCase) ||
-                        name.Equals(prefix, StringComparison.OrdinalIgnoreCase))
-                    {
-                        matching.Add(f);
-                    }
-                }
-                if (matching.Count == 0) return null;
-
-                matching.Sort(delegate (string a, string b)
-                {
-                    int na = ExtractTrailingIndex(a);
-                    int nb = ExtractTrailingIndex(b);
-                    if (na != nb) return na.CompareTo(nb);
-                    return StringComparer.OrdinalIgnoreCase.Compare(a, b);
-                });
-
-                var list = new List<BitmapSource>();
-                for (int i = 0; i < matching.Count; i++)
-                {
-                    var bi = new BitmapImage();
-                    bi.BeginInit();
-                    bi.UriSource = new Uri(matching[i], UriKind.Absolute);
-                    bi.CacheOption = BitmapCacheOption.OnLoad;
-                    bi.EndInit();
-                    bi.Freeze();
-                    list.Add(bi);
-                }
-                return list.ToArray();
-            }
-            catch
-            {
-                return null;
-            }
-        }
-
-        private static int ExtractTrailingIndex(string path)
-        {
-            try
-            {
-                string name = System.IO.Path.GetFileNameWithoutExtension(path);
-                int idx = name.LastIndexOf('_');
-                if (idx >= 0 && idx + 1 < name.Length)
-                {
-                    int n;
-                    if (int.TryParse(name.Substring(idx + 1), out n)) return n;
-                }
-            }
-            catch { }
-            return 0;
-        }
-
-        private void ReloadSprites()
-        {
-            try
-            {
-                string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
-                string customDir = System.IO.Path.Combine(appData, "BMFlow", "Mascots", mascotType);
-                if (!Directory.Exists(customDir))
-                {
-                    string localDir = System.IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Mascots", mascotType);
-                    if (Directory.Exists(localDir)) customDir = localDir;
-                }
-
-                if (Directory.Exists(customDir))
-                {
-                    var customWalk = LoadCustomFrames(customDir, "walk");
-                    if (customWalk != null && customWalk.Length > 0)
-                    {
-                        var customIdle = LoadCustomFrames(customDir, "idle");
-                        var customSleep = LoadCustomFrames(customDir, "sleep");
-                        var customJump = LoadCustomFrames(customDir, "jump");
-                        walkFrames = customWalk;
-                        idleFrames = customIdle != null && customIdle.Length > 0 ? customIdle : new BitmapSource[] { customWalk[0] };
-                        sleepFrames = customSleep != null && customSleep.Length > 0 ? customSleep : idleFrames;
-                        jumpFrames = customJump;
-                        defaultFacingRight = (mascotType == "Fox" || mascotType.StartsWith("Cat"));
-                        int customScale = (walkFrames[0].PixelHeight <= 32) ? 2 : 1;
-                        mascotImage.Width = walkFrames[0].PixelWidth * customScale;
-                        mascotImage.Height = walkFrames[0].PixelHeight * customScale;
-                        mascotHost.Width = mascotImage.Width;
-                        mascotHost.Height = mascotImage.Height;
-                        mascotImage.Source = walkFrames[0];
-                        return;
-                    }
-                }
-            }
-            catch { }
-
-            defaultFacingRight = false;
-            mascotImage.Width = 48;
-            mascotImage.Height = 32;
-            mascotHost.Width = 48;
-            mascotHost.Height = 32;
-            jumpFrames = null;
-
-            Dictionary<char, Color> palette = GetPalette(mascotType);
-            if (mascotType == "Dog")
-            {
-                walkFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DogWalk0, palette, 2),
-                    CreateSpriteBitmap(DogWalk1, palette, 2),
-                    CreateSpriteBitmap(DogWalk2, palette, 2),
-                    CreateSpriteBitmap(DogWalk3, palette, 2)
-                };
-                idleFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DogIdle0, palette, 2),
-                    CreateSpriteBitmap(DogIdle1, palette, 2)
-                };
-                sleepFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DogSleep0, palette, 2),
-                    CreateSpriteBitmap(DogSleep1, palette, 2)
-                };
-            }
-            else if (mascotType == "Duck")
-            {
-                walkFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DuckWalk0, palette, 2),
-                    CreateSpriteBitmap(DuckWalk1, palette, 2),
-                    CreateSpriteBitmap(DuckWalk2, palette, 2),
-                    CreateSpriteBitmap(DuckWalk3, palette, 2)
-                };
-                idleFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DuckIdle0, palette, 2),
-                    CreateSpriteBitmap(DuckIdle1, palette, 2)
-                };
-                sleepFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(DuckSleep0, palette, 2),
-                    CreateSpriteBitmap(DuckSleep1, palette, 2)
-                };
-            }
-            else // Cats
-            {
-                walkFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(CatWalk0, palette, 2),
-                    CreateSpriteBitmap(CatWalk1, palette, 2),
-                    CreateSpriteBitmap(CatWalk2, palette, 2),
-                    CreateSpriteBitmap(CatWalk3, palette, 2)
-                };
-                idleFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(CatIdle0, palette, 2),
-                    CreateSpriteBitmap(CatIdle1, palette, 2)
-                };
-                sleepFrames = new BitmapSource[]
-                {
-                    CreateSpriteBitmap(CatSleep0, palette, 2),
-                    CreateSpriteBitmap(CatSleep1, palette, 2)
-                };
-            }
-
-            if (walkFrames != null && walkFrames.Length > 0)
-                mascotImage.Source = walkFrames[0];
-        }
-
-        private static Dictionary<char, Color> GetPalette(string type)
-        {
-            var dict = new Dictionary<char, Color>();
-            if (type == "CatOrange")
-            {
-                dict['O'] = Color.FromRgb(24, 24, 26);
-                dict['B'] = Color.FromRgb(235, 172, 82);
-                dict['D'] = Color.FromRgb(220, 118, 43);
-                dict['E'] = Color.FromRgb(24, 24, 26);
-                dict['L'] = Color.FromRgb(24, 24, 26);
-                dict['P'] = Color.FromRgb(250, 200, 160);
-                dict['N'] = Color.FromRgb(235, 120, 130);
-                dict['W'] = Color.FromRgb(255, 255, 255);
-            }
-            else if (type == "CatWhite")
-            {
-                // O branco puro apagava a silhueta e transformava o mascote em
-                // uma mancha nas escalas menores. Mantemos o pelo claro, mas
-                // com contorno grafite e sombras suficientemente contrastantes.
-                dict['O'] = Color.FromRgb(35, 39, 48);
-                dict['B'] = Color.FromRgb(232, 236, 243);
-                dict['D'] = Color.FromRgb(112, 124, 145);
-                dict['E'] = Color.FromRgb(18, 105, 196);
-                dict['L'] = Color.FromRgb(245, 184, 36);
-                dict['P'] = Color.FromRgb(255, 139, 164);
-                dict['N'] = Color.FromRgb(218, 55, 102);
-                dict['W'] = Color.FromRgb(174, 187, 207);
-            }
-            else if (type == "CatTuxedo")
-            {
-                dict['O'] = Color.FromRgb(8, 9, 12);
-                dict['B'] = Color.FromRgb(31, 32, 38);
-                dict['D'] = Color.FromRgb(235, 237, 241);
-                dict['E'] = Color.FromRgb(241, 196, 15);
-                dict['L'] = Color.FromRgb(241, 196, 15);
-                dict['P'] = Color.FromRgb(248, 165, 194);
-                dict['N'] = Color.FromRgb(232, 67, 147);
-                dict['W'] = Colors.White;
-            }
-            else if (type == "Dog")
-            {
-                dict['B'] = Color.FromRgb(229, 152, 102);
-                dict['D'] = Color.FromRgb(160, 64, 0);
-                dict['E'] = Color.FromRgb(44, 62, 80);
-                dict['P'] = Color.FromRgb(250, 219, 216);
-                dict['N'] = Color.FromRgb(44, 62, 80);
-                dict['W'] = Color.FromRgb(254, 249, 231);
-            }
-            else if (type == "Duck")
-            {
-                dict['B'] = Colors.White;
-                dict['D'] = Color.FromRgb(224, 224, 224);
-                dict['E'] = Color.FromRgb(44, 62, 80);
-                dict['P'] = Color.FromRgb(243, 156, 18);
-                dict['N'] = Color.FromRgb(211, 84, 0);
-                dict['W'] = Color.FromRgb(243, 156, 18);
-            }
-            else // CatBlack (Reference Image!)
-            {
-                dict['O'] = Color.FromRgb(8, 10, 15);
-                dict['B'] = Color.FromRgb(41, 43, 52);
-                dict['D'] = Color.FromRgb(29, 31, 38);
-                dict['E'] = Color.FromRgb(255, 211, 42);
-                dict['L'] = Color.FromRgb(70, 214, 92);
-                dict['P'] = Color.FromRgb(248, 165, 194);
-                dict['N'] = Color.FromRgb(232, 67, 147);
-                dict['W'] = Color.FromRgb(62, 66, 83);
-            }
-            return dict;
-        }
-
-        private static BitmapSource CreateSpriteBitmap(string[] rows, Dictionary<char, Color> palette, int scale)
-        {
-            int h = rows.Length;
-            int w = rows[0].Length;
-            int outW = w * scale;
-            int outH = h * scale;
-            int stride = outW * 4;
-            byte[] pixels = new byte[stride * outH];
-
-            for (int y = 0; y < h; y++)
-            {
-                string row = rows[y];
-                for (int x = 0; x < w; x++)
-                {
-                    char c = row[x];
-                    Color col;
-                    if (!palette.TryGetValue(c, out col) || col.A == 0) continue;
-
-                    for (int sy = 0; sy < scale; sy++)
-                    {
-                        int py = y * scale + sy;
-                        for (int sx = 0; sx < scale; sx++)
-                        {
-                            int px = x * scale + sx;
-                            int idx = py * stride + px * 4;
-                            pixels[idx + 0] = col.B;
-                            pixels[idx + 1] = col.G;
-                            pixels[idx + 2] = col.R;
-                            pixels[idx + 3] = col.A;
-                        }
-                    }
-                }
-            }
-
-            var bs = BitmapSource.Create(outW, outH, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
-            bs.Freeze();
-            return bs;
-        }
-
-        // --- Sprite Pixel Art Data (24x16 grids) ---
-        private static readonly string[] CatWalk0 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".....OO.....OO..........",
-            ".....OBO...OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBO..OO.....",
-            "....OBBBBBBBBBO..OBO....",
-            ".....OBEBBBEBBO..ODO....",
-            "....OBBWWWBBBBO.OBBO....",
-            ".....OWWWWWBBOOOBDO.....",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            ".....O.O.......O.O......"
-        };
-
-        private static readonly string[] CatWalk1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "..................OO....",
-            ".....OO.....OO....OBO...",
-            ".....OBO...OBO....ODO...",
-            ".....OBBOOOBBO...OBBO...",
-            "....OBBBDBDBBBO.ODBO....",
-            "....OBBBBBBBBBOOBBO.....",
-            ".....OBEBBBEBBOBBO......",
-            "....OBBWWWBBBBOBBO......",
-            ".....OWWWWWBBOOO........",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            "......OO........OO......"
-        };
-
-        private static readonly string[] CatWalk2 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".....OO.....OO..........",
-            ".....OBO...OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBO..OO.....",
-            "....OBBBBBBBBBO..OBO....",
-            ".....OBEBBBEBBO..ODO....",
-            "....OBBWWWBBBBO.OBBO....",
-            ".....OWWWWWBBOOOBDO.....",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            "......O.O.......O.O....."
-        };
-
-        private static readonly string[] CatWalk3 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "..................OO....",
-            ".....OO.....OO....OBO...",
-            ".....OBO...OBO....ODO...",
-            ".....OBBOOOBBO...OBBO...",
-            "....OBBBDBDBBBO.ODBO....",
-            "....OBBBBBBBBBOOBBO.....",
-            ".....OBEBBBEBBOBBO......",
-            "....OBBWWWBBBBOBBO......",
-            ".....OWWWWWBBOOO........",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            ".......OO........OO....."
-        };
-
-        private static readonly string[] CatIdle0 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".....OO.....OO..........",
-            ".....OBO...OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBO..OO.....",
-            "....OBBBBBBBBBO..OBO....",
-            ".....OBEBBBEBBO..ODO....",
-            "....OBBWWWBBBBO.OBBO....",
-            ".....OWWWWWBBOOOBDO.....",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            ".....O.O.......O.O......"
-        };
-
-        private static readonly string[] CatIdle1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".....OO.....OO..........",
-            ".....OBO...OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBO..OO.....",
-            "....OBBBBBBBBBO..OBO....",
-            ".....OBDDBBBDDO..ODO....",
-            "....OBBWWWBBBBO.OBBO....",
-            ".....OWWWWWBBOOOBDO.....",
-            "......OOOOOOODBDBO......",
-            "......OBBBBBBDBDO.......",
-            "......OBBBBBBBBBO.......",
-            ".....O.O.......O.O......"
-        };
-
-        private static readonly string[] CatSleep0 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "......OO...OO...........",
-            "......OBO..OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBOOOOOO....",
-            "....ODDBBDBBOODDBBBO....",
-            "....OBBWWWBBBOBBBBBBBO..",
-            "....OBBBBBOOBBBBBBDDO...",
-            ".....OBBBBBBBBBBBBBO....",
-            "......OOOOOOOOOOOOOO...."
-        };
-
-        private static readonly string[] CatSleep1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "......OO...OO...........",
-            "......OBO..OBO..........",
-            ".....OBBOOOBBO..........",
-            "....OBBBDBDBBBOOOOOO....",
-            "....OBEBBBEBBOODDBBBO...",
-            "....OBBWWWBBBOBBBBBBBO..",
-            "....OBBBBBOOBBBBBBDDO...",
-            ".....OBBBBBBBBBBBBBO....",
-            "......OOOOOOOOOOOOOO...."
-        };
-        private static readonly string[] DogWalk0 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBEBBBEBBBB........BB.",
-            "..BBEBBBEBBBB.......BBB.",
-            "..BBBBNBBBBBB......BBBB.",
-            "..BBBWBBBBBBBB....BBBB..",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BB...BB....BB...BB..",
-            "....BB...BB....BB...BB..",
-            "....WW...WW....WW...WW.."
-        };
-
-        private static readonly string[] DogWalk1 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBEBBBEBBBB.........B.",
-            "..BBEBBBEBBBB........BB.",
-            "..BBBBNBBBBBB.......BBB.",
-            "..BBBWBBBBBBBB.....BBBB.",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "...BB.....BB..BB.....BB.",
-            "..BB.......BB..BB.....BB",
-            "..WW.......WW..WW.....WW"
-        };
-
-        private static readonly string[] DogWalk2 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBEBBBEBBBB........BB.",
-            "..BBEBBBEBBBB.......BBB.",
-            "..BBBBNBBBBBB......BBBB.",
-            "..BBBWBBBBBBBB....BBBB..",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            ".....BB.BB......BB.BB...",
-            ".....BB.BB......BB.BB...",
-            ".....WW.WW......WW.WW..."
-        };
-
-        private static readonly string[] DogWalk3 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBEBBBEBBBB.......BBB.",
-            "..BBEBBBEBBBB......BBBB.",
-            "..BBBBNBBBBBB.....BBBB..",
-            "..BBBWBBBBBBBB...BBBB...",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            ".....BB...BB....BB...BB.",
-            "....BB.....BB....BB...BB",
-            "....WW.....WW....WW...WW"
-        };
-
-        private static readonly string[] DogIdle0 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBEBBBEBBBB........BB.",
-            "..BBEBBBEBBBB.......BBB.",
-            "..BBBBNBBBBBB......BBBB.",
-            "..BBBWBBBBBBBB....BBBB..",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBBB...",
-            "....BB...BB....BBBBBB...",
-            "....BB...BB...BBBBBBB...",
-            "....WW...WW..WWWW..WW..."
-        };
-
-        private static readonly string[] DogIdle1 = new string[] {
-            "......DD................",
-            ".....DPD................",
-            "....DDBD................",
-            "...BBBBBBBBB............",
-            "..BBDDBBDDBBB.......BBB.",
-            "..BBDDBBDDBBB......BBBB.",
-            "..BBBBNBBBBBB.....BBBB..",
-            "..BBBWBBBBBBBB...BBBB...",
-            "...BBBBBBBBBBBBBBBBBB...",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BDDBBBDDBBBDDBBB....",
-            "....BBBBBBBBBBBBBBBB....",
-            "....BBBBBBBBBBBBBBBBB...",
-            "....BB...BB....BBBBBB...",
-            "....WW...WW..WWWW..WW...",
-            "....WW...WW..WWWW..WW..."
-        };
-
-        private static readonly string[] DogSleep0 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".....DD.................",
-            "....DPD.................",
-            "...DDBD.................",
-            "..BBBBBBBBBBB...........",
-            "..BBDDBBDDBBB...........",
-            "..BBBBBBBBBBBBBBBB......",
-            "..BDDBBBBDDBBBBDDBBB....",
-            ".BBBBBBBBBBBBBBBBBBBB...",
-            ".BBDDDBBDDDBBDDDBBBBB...",
-            ".BBBBBBBBBBBBBBBBBBBB...",
-            ".WWWWWWWWWWWWWWWWWWWW...",
-            "........................"
-        };
-
-        private static readonly string[] DogSleep1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            ".....DD.................",
-            "....DPD.................",
-            "...DDBD.................",
-            "..BBBBBBBBBBB...........",
-            "..BBDDBBDDBBB...........",
-            "..BBBBBBBBBBBBBBBB......",
-            "..BDDBBBBDDBBBBDDBBB....",
-            ".BBBBBBBBBBBBBBBBBBBB...",
-            ".BBDDDBBDDDBBDDDBBBBB...",
-            ".BBBBBBBBBBBBBBBBBBBB...",
-            ".WWWWWWWWWWWWWWWWWWWW...",
-            "........................",
-            "........................"
-        };
-
-        private static readonly string[] DuckWalk0 = new string[] {
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBEBB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            ".......WW....WW.........",
-            ".......WW....WW.........",
-            "......WWW...WWW........."
-        };
-
-        private static readonly string[] DuckWalk1 = new string[] {
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBEBB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            "......WW......WW........",
-            ".....WW........WW.......",
-            "....WWW.......WWW......."
-        };
-
-        private static readonly string[] DuckWalk2 = new string[] {
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBEBB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            "........WW..WW..........",
-            "........WW..WW..........",
-            ".......WWW..WWW........."
-        };
-
-        private static readonly string[] DuckWalk3 = new string[] {
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBEBB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            "........WW....WW........",
-            ".......WW......WW.......",
-            "......WWW......WWW......"
-        };
-
-        private static readonly string[] DuckIdle0 = new string[] {
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBEBB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            ".......WW....WW.........",
-            ".......WW....WW.........",
-            "......WWW...WWW........."
-        };
-
-        private static readonly string[] DuckIdle1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            ".....PPBBDDB............",
-            "....NNNBBBBB............",
-            ".......BBBBB............",
-            "......BBBBBB............",
-            ".....BBBBBBBBBBB........",
-            "....BBBBBDDDBBBBB.......",
-            "...BBBBBBDDDBBBBBB......",
-            "...BBBBBBBBBBBBBBB......",
-            "...BBBBBBBBBBBBBB.......",
-            "....BBBBBBBBBBBB........",
-            ".......WW....WW.........",
-            "......WWW...WWW........."
-        };
-
-        private static readonly string[] DuckSleep0 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            "......BBDDBBBBBB........",
-            ".....PPBBDDDBBBBB.......",
-            "....NNNBBBDDBBBBBB......",
-            "....BBBBBBBBBBBBBB......",
-            "....BBBBBBBBBBBBBB......",
-            ".....BBBBBBBBBBBB.......",
-            "......WWWWWWWWWW........",
-            "........................",
-            "........................"
-        };
-
-        private static readonly string[] DuckSleep1 = new string[] {
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            "........................",
-            ".......BBBBB............",
-            "......BBDDBBBBBB........",
-            ".....PPBBDDDBBBBB.......",
-            "....NNNBBBDDBBBBBB......",
-            "....BBBBBBBBBBBBBB......",
-            "....BBBBBBBBBBBBBB......",
-            ".....BBBBBBBBBBBB.......",
-            "......WWWWWWWWWW........",
-            "........................",
-            "........................",
-            "........................"
-        };
-    }
-
-    internal sealed class DockSettingsWindow : Window
-    {
-        private readonly DockWindow dock;
-        private readonly Dictionary<string, Border> themeCards = new Dictionary<string, Border>();
-        private readonly Dictionary<string, Border> navigationItems = new Dictionary<string, Border>();
-        private CheckBox keepWindowsCheck;
-        private Grid settingsPageHost;
-        private int selectedWorkspaceIndex = 0;
-        private string workspaceAppCatalogSearch = "";
-
-        public void ShowSettingsPageExternal(string page)
-        {
-            ShowSettingsPage(page);
-        }
-
-        public DockSettingsWindow(DockWindow ownerDock, string initialPage = "general")
-        {
-            dock = ownerDock;
-            Title = "Configurações da B.M Flow";
-            Width = 1050;
-            Height = 740;
-            MinWidth = 900;
-            MinHeight = 620;
-            WindowStartupLocation = WindowStartupLocation.CenterScreen;
-            WindowStyle = WindowStyle.None;
-            ResizeMode = ResizeMode.NoResize;
-            Background = new SolidColorBrush(Color.FromRgb(31, 29, 29));
-            Foreground = Brushes.White;
-            FontFamily = new FontFamily("Segoe UI");
-            Topmost = true;
-
-            var root = new Grid();
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(250) });
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(42) });
-            root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-
-            var titleBar = new Grid { Background = new SolidColorBrush(Color.FromRgb(35, 32, 32)) };
-            Grid.SetColumnSpan(titleBar, 2);
-            titleBar.MouseLeftButtonDown += delegate(object sender, MouseButtonEventArgs args)
-            {
-                if (args.LeftButton == MouseButtonState.Pressed && args.GetPosition(titleBar).X < titleBar.ActualWidth - 44) DragMove();
-            };
-            var close = new Border { Width = 42, HorizontalAlignment = HorizontalAlignment.Right, Background = Brushes.Transparent, Cursor = Cursors.Hand };
-            close.Child = new TextBlock { Text = "×", FontSize = 22, Foreground = new SolidColorBrush(Color.FromRgb(220, 216, 214)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            close.MouseEnter += delegate { close.Background = new SolidColorBrush(Color.FromRgb(196, 43, 38)); };
-            close.MouseLeave += delegate { close.Background = Brushes.Transparent; };
-            close.MouseLeftButtonUp += delegate { Close(); };
-            titleBar.Children.Add(close);
-            root.Children.Add(titleBar);
-
-            var sidebar = new Grid { Background = new SolidColorBrush(Color.FromRgb(31, 29, 30)), Margin = new Thickness(0) };
-            sidebar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            sidebar.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-            sidebar.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            Grid.SetRow(sidebar, 1);
-
-            var brand = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(25, 22, 20, 20) };
-            brand.Children.Add(new Border
-            {
-                Width = 40, Height = 40, CornerRadius = new CornerRadius(10), Background = new SolidColorBrush(Color.FromRgb(255, 105, 82)),
-                Child = new TextBlock { Text = "▦", FontSize = 22, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
-            });
-            var brandText = new StackPanel { Margin = new Thickness(14, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            brandText.Children.Add(new TextBlock { Text = "B.M Flow", FontSize = 19, FontWeight = FontWeights.SemiBold });
-            brandText.Children.Add(new TextBlock { Text = "Configurações", FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(173, 168, 168)) });
-            brand.Children.Add(brandText);
-            sidebar.Children.Add(brand);
-
-            var search = new TextBox
-            {
-                Text = "Buscar nos ajustes", Foreground = new SolidColorBrush(Color.FromRgb(155, 150, 150)),
-                Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)), BorderBrush = new SolidColorBrush(Color.FromRgb(66, 62, 62)),
-                BorderThickness = new Thickness(1), Padding = new Thickness(14, 11, 14, 11), Margin = new Thickness(20, 0, 20, 18)
-            };
-            search.GotFocus += delegate { if (search.Text == "Buscar nos ajustes") { search.Text = String.Empty; search.Foreground = Brushes.White; } };
-            search.LostFocus += delegate { if (String.IsNullOrWhiteSpace(search.Text)) { search.Text = "Buscar nos ajustes"; search.Foreground = new SolidColorBrush(Color.FromRgb(155, 150, 150)); } };
-            search.TextChanged += delegate
-            {
-                if (!search.IsKeyboardFocused) return;
-                string query = (search.Text ?? String.Empty).Trim().ToLowerInvariant();
-                if (query.Contains("tema")) ShowSettingsPage("themes");
-                else if (query.Contains("espaco") || query.Contains("espaço") || query.Contains("workspace") || query.Contains("trabalho") || query.Contains("estudo") || query.Contains("jogos")) ShowSettingsPage("workspaces");
-                else if (query.Contains("tamanho") || query.Contains("posição") || query.Contains("indicador")) ShowSettingsPage("size");
-                else if (query.Contains("apar") || query.Contains("opacidade") || query.Contains("fundo")) ShowSettingsPage("appearance");
-                else if (query.Contains("widget") || query.Contains("mouse") || query.Contains("cursor") || query.Contains("mac") || query.Contains("personaliz") || query.Contains("mascote") || query.Contains("pet") || query.Contains("gato") || query.Contains("gatinho") || query.Contains("cachorro")) ShowSettingsPage("widgets");
-                else if (query.Contains("sobre") || query.Contains("versão")) ShowSettingsPage("about");
-                else if (query.Length >= 3) ShowSettingsPage("general");
-            };
-            Grid.SetRow(search, 1);
-            sidebar.Children.Add(search);
-
-            var navigation = new StackPanel { Margin = new Thickness(14, 0, 14, 0) };
-            navigation.Children.Add(CreateNavigationItem("general", "\uE713", "Geral"));
-            navigation.Children.Add(CreateNavigationItem("workspaces", "\uE8A7", "Espaços"));
-            navigation.Children.Add(CreateNavigationItem("appearance", "\uE790", "Aparência"));
-            navigation.Children.Add(CreateNavigationItem("themes", "\uE771", "Temas"));
-            navigation.Children.Add(CreateNavigationItem("size", "\uE799", "Tamanho e posição"));
-            navigation.Children.Add(CreateNavigationItem("widgets", "\uE74C", "Personalização"));
-            navigation.Children.Add(CreateNavigationItem("about", "\uE946", "Sobre"));
-            Grid.SetRow(navigation, 2);
-            sidebar.Children.Add(navigation);
-            root.Children.Add(sidebar);
-
-            settingsPageHost = new Grid { Background = new SolidColorBrush(Color.FromRgb(43, 39, 38)) };
-            Grid.SetColumn(settingsPageHost, 1);
-            Grid.SetRow(settingsPageHost, 1);
-            root.Children.Add(settingsPageHost);
-            Content = root;
-            ShowSettingsPage(initialPage ?? "general");
-        }
-
-        private Border CreateNavigationItem(string key, string glyph, string label)
-        {
-            var accent = new Border { Width = 4, Height = 22, CornerRadius = new CornerRadius(2), Background = Brushes.Transparent, VerticalAlignment = VerticalAlignment.Center };
-            var grid = new Grid();
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(8) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.Children.Add(accent);
-            var icon = new TextBlock
-            {
-                Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 18,
-                Foreground = new SolidColorBrush(Color.FromRgb(210, 207, 207)), HorizontalAlignment = HorizontalAlignment.Center,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            Grid.SetColumn(icon, 1);
-            grid.Children.Add(icon);
-            var text = new TextBlock { Text = label, FontSize = 14.5, Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center };
-            Grid.SetColumn(text, 2);
-            grid.Children.Add(text);
-            var item = new Border
-            {
-                Height = 49, CornerRadius = new CornerRadius(8), Background = Brushes.Transparent,
-                Cursor = Cursors.Hand, Margin = new Thickness(0, 2, 0, 2), Child = grid, Tag = accent
-            };
-            item.MouseEnter += delegate { if (item.Background == Brushes.Transparent) item.Background = new SolidColorBrush(Color.FromRgb(47, 44, 44)); };
-            item.MouseLeave += delegate { if (((Border)item.Tag).Background == Brushes.Transparent) item.Background = Brushes.Transparent; };
-            item.MouseLeftButtonUp += delegate { ShowSettingsPage(key); };
-            navigationItems[key] = item;
-            return item;
-        }
-
-        private void ShowSettingsPage(string page)
-        {
-            if (settingsPageHost == null) return;
-            foreach (var entry in navigationItems)
-            {
-                bool active = entry.Key == page;
-                entry.Value.Background = active ? new SolidColorBrush(Color.FromRgb(58, 54, 54)) : Brushes.Transparent;
-                var accent = entry.Value.Tag as Border;
-                if (accent != null) accent.Background = active ? new SolidColorBrush(Color.FromRgb(255, 101, 75)) : Brushes.Transparent;
-            }
-
-            var content = new StackPanel { Margin = new Thickness(42, 18, 42, 36) };
-            if (page == "themes") BuildThemesPage(content);
-            else if (page == "workspaces") BuildWorkspacesPage(content);
-            else if (page == "appearance") BuildAppearancePage(content);
-            else if (page == "size") BuildSizePage(content);
-            else if (page == "widgets") BuildWidgetsPage(content);
-            else if (page == "about") BuildAboutPage(content);
-            else BuildGeneralPage(content);
-            var scroll = new ScrollViewer
-            {
-                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-                HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-                Content = content
-            };
-            settingsPageHost.Children.Clear();
-            settingsPageHost.Children.Add(scroll);
-        }
-
-        private static FrameworkElement PageHeader(string glyph, string title, string subtitle)
-        {
-            var panel = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 24) };
-            panel.Children.Add(new Border
-            {
-                Width = 58, Height = 58, CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromRgb(103, 107, 117)),
-                Child = new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 27, Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center }
-            });
-            var text = new StackPanel { Margin = new Thickness(18, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            text.Children.Add(new TextBlock { Text = title, FontSize = 28, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            text.Children.Add(new TextBlock { Text = subtitle, FontSize = 13.5, Foreground = new SolidColorBrush(Color.FromRgb(178, 172, 171)), Margin = new Thickness(0, 3, 0, 0) });
-            panel.Children.Add(text);
-            return panel;
-        }
-
-        private void BuildWorkspacesPage(StackPanel content)
-        {
-            var wsMgr = dock.CurrentWorkspaceManager;
-            if (wsMgr == null) return;
-
-            content.Children.Add(PageHeader("\uE8A7", "Espaços de Trabalho", "Configure docks diferentes para Trabalho, Estudo e Jogos. Alterne instantaneamente com Ctrl+Alt+1/2/3."));
-
-            if (selectedWorkspaceIndex < 0 || selectedWorkspaceIndex >= wsMgr.Workspaces.Count)
-                selectedWorkspaceIndex = Math.Max(0, Math.Min(wsMgr.ActiveIndex, wsMgr.Workspaces.Count - 1));
-
-            var dynamicHost = new StackPanel();
-            RenderWorkspaceEditor(dynamicHost, wsMgr);
-            content.Children.Add(dynamicHost);
-        }
-
-        private void RenderWorkspaceEditor(StackPanel host, WorkspaceManager wsMgr)
-        {
-            Action refreshView = delegate
-            {
-                host.Children.Clear();
-                RenderWorkspaceEditor(host, wsMgr);
-            };
-
-            // 1. Barra de seleção de espaços
-            host.Children.Add(SectionTitle("Selecione ou Crie um Espaço", "Cada espaço possui seus próprios aplicativos fixados na Dock"));
-
-            var pillsPanel = new WrapPanel { Margin = new Thickness(0, 0, 0, 16) };
-            for (int i = 0; i < wsMgr.Workspaces.Count; i++)
-            {
-                int index = i;
-                var ws = wsMgr.Workspaces[i];
-                bool isSelected = index == selectedWorkspaceIndex;
-                bool isActive = index == wsMgr.ActiveIndex;
-
-                var pill = new Border
-                {
-                    Height = 44,
-                    CornerRadius = new CornerRadius(12),
-                    Background = new SolidColorBrush(isSelected ? Color.FromRgb(255, 105, 82) : Color.FromRgb(58, 54, 54)),
-                    BorderBrush = new SolidColorBrush(isActive ? Color.FromRgb(40, 205, 65) : (isSelected ? Color.FromRgb(255, 140, 120) : Color.FromRgb(80, 75, 75))),
-                    BorderThickness = new Thickness(isActive ? 2 : 1),
-                    Padding = new Thickness(16, 0, 16, 0),
-                    Margin = new Thickness(0, 0, 10, 10),
-                    Cursor = Cursors.Hand
-                };
-
-                var sp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-                sp.Children.Add(new TextBlock
-                {
-                    Text = ws.Icon ?? "💼",
-                    FontSize = 18,
-                    VerticalAlignment = VerticalAlignment.Center,
-                    Margin = new Thickness(0, 0, 8, 0)
-                });
-                sp.Children.Add(new TextBlock
-                {
-                    Text = ws.Name,
-                    FontSize = 14,
-                    FontWeight = isSelected ? FontWeights.SemiBold : FontWeights.Normal,
-                    Foreground = Brushes.White,
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                sp.Children.Add(new TextBlock
-                {
-                    Text = " (" + (index + 1) + ")",
-                    FontSize = 12,
-                    Foreground = new SolidColorBrush(isSelected ? Color.FromArgb(220, 255, 255, 255) : Color.FromRgb(180, 175, 175)),
-                    VerticalAlignment = VerticalAlignment.Center
-                });
-                if (isActive)
-                {
-                    var badge = new Border
-                    {
-                        CornerRadius = new CornerRadius(6),
-                        Background = new SolidColorBrush(Color.FromArgb(50, 40, 205, 65)),
-                        Padding = new Thickness(6, 2, 6, 2),
-                        Margin = new Thickness(8, 0, 0, 0),
-                        VerticalAlignment = VerticalAlignment.Center
-                    };
-                    badge.Child = new TextBlock
-                    {
-                        Text = "ATIVO",
-                        FontSize = 9.5,
-                        FontWeight = FontWeights.Bold,
-                        Foreground = new SolidColorBrush(Color.FromRgb(70, 230, 95))
-                    };
-                    sp.Children.Add(badge);
-                }
-
-                pill.Child = sp;
-                pill.MouseLeftButtonUp += delegate
-                {
-                    selectedWorkspaceIndex = index;
-                    refreshView();
-                };
-                pillsPanel.Children.Add(pill);
-            }
-
-            // Botão para criar novo espaço
-var addWsBtn = new Border
-{
-Height = 44,
-CornerRadius = new CornerRadius(12),
-Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(100, 95, 95)),
-BorderThickness = new Thickness(1),
-Padding = new Thickness(16, 0, 16, 0),
-Margin = new Thickness(0, 0, 10, 10),
-Cursor = Cursors.Hand
-};
-var addSp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-addSp.Children.Add(new TextBlock { Text = "＋", FontSize = 16, Foreground = Brushes.White, Margin = new Thickness(0, 0, 6, 0) });
-addSp.Children.Add(new TextBlock { Text = "Novo Espaço", FontSize = 13.5, Foreground = Brushes.White });
-addWsBtn.Child = addSp;
-addWsBtn.MouseEnter += delegate { addWsBtn.Background = new SolidColorBrush(Color.FromRgb(65, 60, 60)); };
-addWsBtn.MouseLeave += delegate { addWsBtn.Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)); };
-addWsBtn.MouseLeftButtonUp += delegate
-{
-var newWs = new DockWorkspace(Guid.NewGuid().ToString("N").Substring(0, 8), "Espaço " + (wsMgr.Workspaces.Count + 1), "🚀");
-wsMgr.Workspaces.Add(newWs);
-wsMgr.Save();
-selectedWorkspaceIndex = wsMgr.Workspaces.Count - 1;
-refreshView();
-};
-pillsPanel.Children.Add(addWsBtn);
-host.Children.Add(pillsPanel);
-
-// 2. Detalhes do espaço selecionado
-if (selectedWorkspaceIndex < 0 || selectedWorkspaceIndex >= wsMgr.Workspaces.Count)
-selectedWorkspaceIndex = 0;
-var currentWs = wsMgr.Workspaces[selectedWorkspaceIndex];
-bool isCurrentActive = selectedWorkspaceIndex == wsMgr.ActiveIndex;
-
-var card = SettingsCard();
-var cardStack = new StackPanel();
-card.Child = cardStack;
-
-// Header do card: Nome, Ícone e Ações
-var headerGrid = new Grid { Margin = new Thickness(0, 4, 0, 12) };
-headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-var iconBox = new Border
-{
-Width = 46, Height = 46, CornerRadius = new CornerRadius(12),
-Background = new SolidColorBrush(Color.FromRgb(52, 48, 48)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(80, 75, 75)),
-BorderThickness = new Thickness(1),
-Margin = new Thickness(0, 0, 14, 0),
-Child = new TextBlock
-{
-Text = currentWs.Icon ?? "💼",
-FontSize = 24,
-HorizontalAlignment = HorizontalAlignment.Center,
-VerticalAlignment = VerticalAlignment.Center
-}
-};
-Grid.SetColumn(iconBox, 0);
-headerGrid.Children.Add(iconBox);
-
-var nameStack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-var nameBox = new TextBox
-{
-Text = currentWs.Name,
-FontSize = 16,
-FontWeight = FontWeights.SemiBold,
-Foreground = Brushes.White,
-Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(80, 75, 75)),
-BorderThickness = new Thickness(1),
-Padding = new Thickness(10, 6, 10, 6),
-MaxWidth = 260,
-HorizontalAlignment = HorizontalAlignment.Left
-};
-nameBox.TextChanged += delegate
-{
-if (!String.IsNullOrWhiteSpace(nameBox.Text))
-{
-currentWs.Name = nameBox.Text;
-wsMgr.Save();
-}
-};
-nameStack.Children.Add(nameBox);
-var shortcutHint = new TextBlock
-{
-Text = "Atalho do teclado: Ctrl + Alt + " + (selectedWorkspaceIndex + 1),
-FontSize = 11.5,
-Foreground = new SolidColorBrush(Color.FromRgb(180, 175, 175)),
-Margin = new Thickness(2, 4, 0, 0)
-};
-nameStack.Children.Add(shortcutHint);
-Grid.SetColumn(nameStack, 1);
-headerGrid.Children.Add(nameStack);
-
-// Ações: Ativar, Abrir Todos, Excluir
-var rightActions = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-
-if (!isCurrentActive)
-{
-var activateBtn = CreateActionButton("▶ Ativar na Dock", Color.FromRgb(40, 150, 230), delegate
-{
-dock.SwitchToWorkspace(selectedWorkspaceIndex);
-refreshView();
-});
-rightActions.Children.Add(activateBtn);
-}
-
-var launchAllBtn = CreateActionButton("🚀 Abrir / Restaurar todos os apps", Color.FromRgb(35, 160, 90), delegate
-{
-dock.LaunchOrRestoreWorkspaceApps(currentWs);
-});
-rightActions.Children.Add(launchAllBtn);
-
-if (wsMgr.Workspaces.Count > 1)
-{
-var deleteBtn = CreateActionButton("🗑 Excluir", Color.FromRgb(190, 50, 50), delegate
-{
-if (MessageBox.Show("Tem certeza que deseja excluir o espaço '" + currentWs.Name + "'?", "Excluir Espaço", MessageBoxButton.YesNo) == MessageBoxResult.Yes)
-{
-wsMgr.Workspaces.RemoveAt(selectedWorkspaceIndex);
-if (wsMgr.ActiveIndex >= wsMgr.Workspaces.Count) wsMgr.ActiveIndex = 0;
-selectedWorkspaceIndex = Math.Max(0, selectedWorkspaceIndex - 1);
-wsMgr.Save();
-dock.TriggerDockRebuild();
-refreshView();
-}
-});
-rightActions.Children.Add(deleteBtn);
-}
-
-Grid.SetColumn(rightActions, 2);
-headerGrid.Children.Add(rightActions);
-cardStack.Children.Add(headerGrid);
-
-// Seletor de ícone / emoji
-var emojiRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 12) };
-emojiRow.Children.Add(new TextBlock
-{
-Text = "Ícone:",
-FontSize = 12.5,
-Foreground = new SolidColorBrush(Color.FromRgb(180, 175, 175)),
-VerticalAlignment = VerticalAlignment.Center,
-Margin = new Thickness(0, 0, 10, 0)
-});
-foreach (string emoji in new[] { "💼", "📚", "🎮", "🚀", "🎨", "💻", "🎵", "🎯", "☕", "⚡", "📁", "🔥" })
-{
-string em = emoji;
-var emBtn = new Border
-{
-Width = 32, Height = 32, CornerRadius = new CornerRadius(8),
-Background = new SolidColorBrush(currentWs.Icon == em ? Color.FromRgb(255, 105, 82) : Color.FromRgb(52, 48, 48)),
-Margin = new Thickness(0, 0, 6, 0), Cursor = Cursors.Hand,
-Child = new TextBlock
-{
-Text = em, FontSize = 16, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-}
-};
-emBtn.MouseLeftButtonUp += delegate
-{
-currentWs.Icon = em;
-wsMgr.Save();
-refreshView();
-};
-emojiRow.Children.Add(emBtn);
-}
-cardStack.Children.Add(emojiRow);
-
-cardStack.Children.Add(Divider());
-
-// Alternância de isolamento
-var isolateToggle = Toggle("Isolar Dock deste espaço", "Oculta outros aplicativos em execução que não pertencem a este espaço", currentWs.IsolateWorkspace);
-isolateToggle.Checked += delegate { currentWs.IsolateWorkspace = true; wsMgr.Save(); if (isCurrentActive) dock.TriggerDockRebuild(); };
-isolateToggle.Unchecked += delegate { currentWs.IsolateWorkspace = false; wsMgr.Save(); if (isCurrentActive) dock.TriggerDockRebuild(); };
-cardStack.Children.Add(isolateToggle);
-
-cardStack.Children.Add(Divider());
-
-// Aplicativos fixados neste espaço
-var appsSection = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
-var appsTitleGrid = new Grid();
-appsTitleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-appsTitleGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-appsTitleGrid.Children.Add(new TextBlock
-{
-Text = "Aplicativos Fixados na Dock deste Espaço (" + currentWs.Apps.Count + ")",
-FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White
-});
-var hintReorder = new TextBlock
-{
-Text = "Use as setas para reorganizar a ordem dos ícones",
-FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(170, 165, 165))
-};
-Grid.SetColumn(hintReorder, 1);
-appsTitleGrid.Children.Add(hintReorder);
-appsSection.Children.Add(appsTitleGrid);
-
-var appsWrap = new WrapPanel { Margin = new Thickness(0, 12, 0, 12) };
-if (currentWs.Apps.Count == 0)
-{
-appsWrap.Children.Add(new TextBlock
-{
-Text = "Nenhum aplicativo neste espaço ainda. Adicione aplicativos usando o catálogo abaixo!",
-FontSize = 12.5, Foreground = new SolidColorBrush(Color.FromRgb(180, 175, 175)),
-Margin = new Thickness(4, 8, 0, 8)
-});
-}
-else
-{
-for (int a = 0; a < currentWs.Apps.Count; a++)
-{
-int appIdx = a;
-var appItem = currentWs.Apps[a];
-
-var appCard = new Border
-{
-CornerRadius = new CornerRadius(10),
-Background = new SolidColorBrush(Color.FromRgb(50, 46, 46)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(75, 70, 70)),
-BorderThickness = new Thickness(1),
-Padding = new Thickness(10, 8, 10, 8),
-Margin = new Thickness(0, 0, 10, 10)
-};
-
-var cardContent = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-var iconImg = new System.Windows.Controls.Image
-{
-Width = 24, Height = 24, Margin = new Thickness(0, 0, 8, 0),
-Source = DockWindow.ResolveAppIcon(appItem.Target, appItem.AppUserModelId)
-};
-cardContent.Children.Add(iconImg);
-
-var nameLabel = new TextBlock
-{
-Text = appItem.Name, FontSize = 12.5, FontWeight = FontWeights.SemiBold,
-Foreground = Brushes.White, MaxWidth = 120, TextTrimming = TextTrimming.CharacterEllipsis,
-VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 10, 0)
-};
-cardContent.Children.Add(nameLabel);
-
-if (appIdx > 0)
-{
-var leftBtn = CreateSmallIconButton("◀", delegate
-{
-var tmp = currentWs.Apps[appIdx - 1];
-currentWs.Apps[appIdx - 1] = currentWs.Apps[appIdx];
-currentWs.Apps[appIdx] = tmp;
-wsMgr.Save();
-if (isCurrentActive) dock.TriggerDockRebuild();
-refreshView();
-});
-cardContent.Children.Add(leftBtn);
-}
-
-if (appIdx < currentWs.Apps.Count - 1)
-{
-var rightBtn = CreateSmallIconButton("▶", delegate
-{
-var tmp = currentWs.Apps[appIdx + 1];
-currentWs.Apps[appIdx + 1] = currentWs.Apps[appIdx];
-currentWs.Apps[appIdx] = tmp;
-wsMgr.Save();
-if (isCurrentActive) dock.TriggerDockRebuild();
-refreshView();
-});
-cardContent.Children.Add(rightBtn);
-}
-
-var delBtn = CreateSmallIconButton("✕", delegate
-{
-currentWs.Apps.RemoveAt(appIdx);
-wsMgr.Save();
-if (isCurrentActive) dock.TriggerDockRebuild();
-refreshView();
-}, Color.FromRgb(220, 60, 60));
-cardContent.Children.Add(delBtn);
-
-appCard.Child = cardContent;
-appsWrap.Children.Add(appCard);
-}
-}
-appsSection.Children.Add(appsWrap);
-cardStack.Children.Add(appsSection);
-
-host.Children.Add(card);
-
-// 3. Catálogo de aplicativos instalados
-host.Children.Add(SectionTitle("Adicionar Aplicativos Instalados", "Procure qualquer aplicativo instalado no seu Windows ou selecione um .exe"));
-
-var catalogCard = SettingsCard();
-var catalogStack = new StackPanel();
-catalogCard.Child = catalogStack;
-
-var filterBar = new Grid { Margin = new Thickness(0, 4, 0, 12) };
-filterBar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-filterBar.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-var searchCatalogBox = new TextBox
-{
-Text = workspaceAppCatalogSearch,
-Foreground = String.IsNullOrWhiteSpace(workspaceAppCatalogSearch) ? new SolidColorBrush(Color.FromRgb(155, 150, 150)) : Brushes.White,
-Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(66, 62, 62)),
-BorderThickness = new Thickness(1),
-Padding = new Thickness(12, 9, 12, 9)
-};
-if (String.IsNullOrWhiteSpace(workspaceAppCatalogSearch)) searchCatalogBox.Text = "Buscar aplicativo (ex: VS Code, Chrome, Spotify, Steam...)";
-
-searchCatalogBox.GotFocus += delegate
-{
-if (searchCatalogBox.Text == "Buscar aplicativo (ex: VS Code, Chrome, Spotify, Steam...)")
-{
-searchCatalogBox.Text = String.Empty;
-searchCatalogBox.Foreground = Brushes.White;
-}
-};
-searchCatalogBox.LostFocus += delegate
-{
-if (String.IsNullOrWhiteSpace(searchCatalogBox.Text))
-{
-searchCatalogBox.Text = "Buscar aplicativo (ex: VS Code, Chrome, Spotify, Steam...)";
-searchCatalogBox.Foreground = new SolidColorBrush(Color.FromRgb(155, 150, 150));
-}
-};
-
-var catalogScrollHost = new StackPanel();
-
-Action updateCatalogView = delegate
-{
-catalogScrollHost.Children.Clear();
-string filter = (workspaceAppCatalogSearch ?? String.Empty).Trim().ToLowerInvariant();
-if (filter == "buscar aplicativo (ex: vs code, chrome, spotify, steam...)") filter = "";
-
-var allApps = WorkspaceManager.GetInstalledApplications();
-var filtered = String.IsNullOrWhiteSpace(filter)
-? allApps
-: allApps.Where(a => (a.Name ?? "").ToLowerInvariant().Contains(filter) ||
-(a.Target ?? "").ToLowerInvariant().Contains(filter)).ToList();
-
-if (filtered.Count == 0)
-{
-catalogScrollHost.Children.Add(new TextBlock
-{
-Text = "Nenhum aplicativo encontrado com esse nome.",
-FontSize = 13, Foreground = new SolidColorBrush(Color.FromRgb(170, 165, 165)),
-Margin = new Thickness(10, 15, 10, 15)
-});
-}
-else
-{
-foreach (var app in filtered.Take(40))
-{
-var appRef = app;
-bool alreadyAdded = currentWs.Apps.Any(a => DockWindow.SameTarget(a.Target, appRef.Target) ||
-(!String.IsNullOrWhiteSpace(a.AppUserModelId) && String.Equals(a.AppUserModelId, appRef.AppUserModelId, StringComparison.OrdinalIgnoreCase)) ||
-String.Equals(a.Name, appRef.Name, StringComparison.OrdinalIgnoreCase));
-
-var row = new Border
-{
-CornerRadius = new CornerRadius(8),
-Background = new SolidColorBrush(Color.FromRgb(52, 48, 48)),
-Padding = new Thickness(12, 7, 12, 7),
-Margin = new Thickness(0, 0, 0, 6)
-};
-
-var rowGrid = new Grid();
-rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(32) });
-rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-rowGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-var rowIcon = new System.Windows.Controls.Image
-{
-Width = 22, Height = 22, VerticalAlignment = VerticalAlignment.Center,
-Source = DockWindow.ResolveAppIcon(appRef.Target, appRef.AppUserModelId)
-};
-rowGrid.Children.Add(rowIcon);
-
-var rowText = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(10, 0, 10, 0) };
-rowText.Children.Add(new TextBlock
-{
-Text = appRef.Name, FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White
-});
-rowText.Children.Add(new TextBlock
-{
-Text = !String.IsNullOrWhiteSpace(appRef.Target) ? appRef.Target : appRef.AppUserModelId,
-FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromRgb(150, 145, 145)),
-TextTrimming = TextTrimming.CharacterEllipsis
-});
-Grid.SetColumn(rowText, 1);
-rowGrid.Children.Add(rowText);
-
-var addActionBtn = new Border
-{
-CornerRadius = new CornerRadius(6),
-Background = new SolidColorBrush(alreadyAdded ? Color.FromRgb(40, 50, 45) : Color.FromRgb(255, 105, 82)),
-Padding = new Thickness(12, 5, 12, 5),
-Cursor = alreadyAdded ? Cursors.Arrow : Cursors.Hand,
-VerticalAlignment = VerticalAlignment.Center
-};
-addActionBtn.Child = new TextBlock
-{
-Text = alreadyAdded ? "✓ Na Dock" : "+ Adicionar",
-FontSize = 12,
-FontWeight = FontWeights.SemiBold,
-Foreground = alreadyAdded ? new SolidColorBrush(Color.FromRgb(120, 200, 140)) : Brushes.White
-};
-if (!alreadyAdded)
-{
-addActionBtn.MouseLeftButtonUp += delegate
-{
-currentWs.Apps.Add(new WorkspaceAppItem
-{
-Name = appRef.Name,
-Target = appRef.Target,
-Arguments = appRef.Arguments,
-AppUserModelId = appRef.AppUserModelId,
-Identity = appRef.Identity
-});
-wsMgr.Save();
-if (isCurrentActive) dock.TriggerDockRebuild();
-refreshView();
-};
-}
-Grid.SetColumn(addActionBtn, 2);
-rowGrid.Children.Add(addActionBtn);
-
-row.Child = rowGrid;
-catalogScrollHost.Children.Add(row);
-}
-}
-};
-
-searchCatalogBox.TextChanged += delegate
-{
-if (searchCatalogBox.IsKeyboardFocused)
-{
-workspaceAppCatalogSearch = searchCatalogBox.Text;
-updateCatalogView();
-}
-};
-Grid.SetColumn(searchCatalogBox, 0);
-filterBar.Children.Add(searchCatalogBox);
-
-var browseExeBtn = new Border
-{
-CornerRadius = new CornerRadius(8),
-Background = new SolidColorBrush(Color.FromRgb(48, 45, 45)),
-BorderBrush = new SolidColorBrush(Color.FromRgb(80, 75, 75)),
-BorderThickness = new Thickness(1),
-Padding = new Thickness(14, 0, 14, 0),
-Margin = new Thickness(10, 0, 0, 0),
-Cursor = Cursors.Hand
-};
-var browseSp = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-browseSp.Children.Add(new TextBlock { Text = "📂", FontSize = 14, Margin = new Thickness(0, 0, 6, 0) });
-browseSp.Children.Add(new TextBlock { Text = "Escolher arquivo .exe…", FontSize = 13, Foreground = Brushes.White });
-browseExeBtn.Child = browseSp;
-browseExeBtn.MouseLeftButtonUp += delegate
-{
-var ofd = new Microsoft.Win32.OpenFileDialog
-{
-Filter = "Executáveis e Atalhos (*.exe;*.lnk)|*.exe;*.lnk|Todos os arquivos (*.*)|*.*",
-Title = "Selecionar aplicativo para o espaço"
-};
-if (ofd.ShowDialog() == true)
-{
-string path = ofd.FileName;
-string name = System.IO.Path.GetFileNameWithoutExtension(path);
-string args = "";
-if (path.EndsWith(".lnk", StringComparison.OrdinalIgnoreCase))
-{
-var resolved = DockWindow.ResolveShortcutPublic(path);
-if (resolved != null && !String.IsNullOrWhiteSpace(resolved.Target))
-{
-path = resolved.Target;
-args = resolved.Arguments ?? "";
-if (!String.IsNullOrWhiteSpace(resolved.Name)) name = resolved.Name;
-}
-}
-currentWs.Apps.Add(new WorkspaceAppItem { Name = name, Target = path, Arguments = args });
-wsMgr.Save();
-if (isCurrentActive) dock.TriggerDockRebuild();
-refreshView();
-}
-};
-Grid.SetColumn(browseExeBtn, 1);
-filterBar.Children.Add(browseExeBtn);
-
-catalogStack.Children.Add(filterBar);
-
-var catalogScroll = new ScrollViewer
-{
-MaxHeight = 260,
-VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
-Content = catalogScrollHost
-};
-updateCatalogView();
-catalogStack.Children.Add(catalogScroll);
-
-host.Children.Add(catalogCard);
-}
-
-private static Border CreateActionButton(string label, Color bg, Action action)
-{
-var btn = new Border
-{
-CornerRadius = new CornerRadius(8),
-Background = new SolidColorBrush(bg),
-Padding = new Thickness(12, 8, 12, 8),
-Margin = new Thickness(6, 0, 0, 0),
-Cursor = Cursors.Hand
-};
-btn.Child = new TextBlock
-{
-Text = label, FontSize = 12.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White
-};
-btn.MouseLeftButtonUp += delegate { action(); };
-return btn;
-}
-
-private static Border CreateSmallIconButton(string label, Action action, Color? fgColor = null)
-{
-var btn = new Border
-{
-Width = 22, Height = 22, CornerRadius = new CornerRadius(5),
-Background = new SolidColorBrush(Color.FromRgb(65, 60, 60)),
-Margin = new Thickness(2, 0, 2, 0), Cursor = Cursors.Hand
-};
-btn.Child = new TextBlock
-{
-Text = label, FontSize = 11, FontWeight = FontWeights.Bold,
-Foreground = new SolidColorBrush(fgColor ?? Color.FromRgb(210, 205, 205)),
-HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-};
-btn.MouseLeftButtonUp += delegate { action(); };
-return btn;
-}
-
-private void BuildGeneralPage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE713", "Geral", "Como a B.M Flow se encaixa no Windows."));
-            content.Children.Add(SectionTitle("Integração com o Windows", "Inicialização, ocultação e espaço de trabalho"));
-            var card = SettingsCard();
-            var stack = new StackPanel();
-            card.Child = stack;
-            var startup = Toggle("Iniciar com o Windows", "Abre a Dock automaticamente ao entrar na sua conta", dock.CurrentStartWithWindows);
-            startup.Checked += delegate
-            {
-                if (!dock.SetStartWithWindows(true)) { startup.IsChecked = false; MessageBox.Show("Não foi possível configurar a inicialização automática.", "B.M Flow"); }
-            };
-            startup.Unchecked += delegate { dock.SetStartWithWindows(false); };
-            stack.Children.Add(startup);
-            stack.Children.Add(Divider());
-            var autoHide = Toggle("Ocultar automaticamente", "Revela a Dock ao encostar o cursor na borda inferior", dock.CurrentAutoHide);
-            autoHide.Checked += delegate { dock.SetAutoHideEnabled(true); if (keepWindowsCheck != null) keepWindowsCheck.IsEnabled = false; };
-            autoHide.Unchecked += delegate { dock.SetAutoHideEnabled(false); if (keepWindowsCheck != null) keepWindowsCheck.IsEnabled = true; };
-            stack.Children.Add(autoHide);
-            stack.Children.Add(Divider());
-            keepWindowsCheck = Toggle("Manter janelas acima da Dock", "Reserva espaço quando a Dock permanece fixa", dock.CurrentKeepWindowsOff);
-            keepWindowsCheck.IsEnabled = !dock.CurrentAutoHide;
-            keepWindowsCheck.Checked += delegate { dock.SetKeepWindowsOffDock(true); };
-            keepWindowsCheck.Unchecked += delegate { dock.SetKeepWindowsOffDock(false); };
-            stack.Children.Add(keepWindowsCheck);
-            stack.Children.Add(Divider());
-            var hideTaskbar = Toggle("Ocultar barra de tarefas original", "Mantém apenas a B.M Flow e restaura a barra ao sair", dock.CurrentHideTaskbar);
-            hideTaskbar.Checked += delegate { dock.SetTaskbarHidden(true); };
-            hideTaskbar.Unchecked += delegate { dock.SetTaskbarHidden(false); };
-            stack.Children.Add(hideTaskbar);
-            content.Children.Add(card);
-
-            content.Children.Add(SectionTitle("Assistente", "Aplicativos compatíveis instalados no Windows"));
-            var assistantCard = SettingsCard();
-            var assistantStack = new StackPanel();
-            assistantCard.Child = assistantStack;
-            assistantStack.Children.Add(ChoiceControl("Assistente padrão", dock.AssistantChoices,
-                String.IsNullOrWhiteSpace(dock.CurrentAssistantName) ? "Nenhum assistente detectado" : dock.CurrentAssistantName,
-                dock.SetAssistantName));
-            assistantStack.Children.Add(Divider());
-            assistantStack.Children.Add(ChoiceControl("Posição na Dock",
-                new[] { "Após Iniciar", "Após aplicativos", "Antes da bandeja" },
-                dock.CurrentAssistantPosition, dock.SetAssistantPosition));
-            content.Children.Add(assistantCard);
-        }
-
-        private void BuildThemesPage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE771", "Temas", "Visuais prontos para transformar a Dock."));
-            content.Children.Add(SectionTitle("Tema da Dock", "Escolha uma predefinição; a alteração é aplicada imediatamente"));
-            themeCards.Clear();
-            var themes = new WrapPanel { Margin = new Thickness(-5, 0, 0, 8) };
-            foreach (string name in new[] { "Nativo", "Liquid Glass", "Meia-noite", "Rocket", "Prateleira Aqua", "Neon", "Canarinho", "Papel", "Flutuante" })
-                themes.Children.Add(BuildThemeCard(name));
-            content.Children.Add(themes);
-            UpdateThemeSelection();
-        }
-
-        private void BuildAppearancePage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE790", "Aparência", "Cores e transparência dos elementos da Dock."));
-            content.Children.Add(SectionTitle("Estilo visual", "Ajustes aplicados em tempo real"));
-            var card = SettingsCard();
-            var stack = new StackPanel();
-            card.Child = stack;
-            stack.Children.Add(ChoiceControl("Fundo dos ícones", new[] { "Branco", "Escuro", "Transparente", "Seguir o tema" }, dock.CurrentIconTileStyle, dock.SetIconTileStyle));
-            stack.Children.Add(Divider());
-            stack.Children.Add(SliderControl("Opacidade da Dock", "%", 80, 255, dock.CurrentOpacity, delegate(double value) { dock.SetDockOpacity(value); }, true));
-            content.Children.Add(card);
-        }
-
-        private void BuildSizePage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE799", "Tamanho e posição", "Ajuste as proporções e o encaixe na tela."));
-            content.Children.Add(SectionTitle("Dimensões", "A Dock é atualizada enquanto você movimenta os controles"));
-            var card = SettingsCard();
-            var stack = new StackPanel();
-            card.Child = stack;
-            stack.Children.Add(SliderControl("Tamanho dos ícones", "px", 40, 64, dock.CurrentIconSize, dock.SetDockIconSize));
-            stack.Children.Add(Divider());
-            stack.Children.Add(SliderControl("Largura do indicador", "px", 4, 18, dock.CurrentIndicatorWidth, dock.SetRunningIndicatorWidth));
-            stack.Children.Add(Divider());
-            stack.Children.Add(SliderControl("Espaço inferior", "px", 0, 20, dock.CurrentBottomGap, dock.SetDockBottomGap));
-            content.Children.Add(card);
-            content.Children.Add(SectionTitle("Organização dos aplicativos", "A ordem personalizada é salva automaticamente"));
-            var hint = SettingsCard();
-            hint.Child = new TextBlock
-            {
-                Text = "Clique, segure e arraste um aplicativo diretamente na Dock para movê-lo para a esquerda ou para a direita.",
-                TextWrapping = TextWrapping.Wrap, Foreground = new SolidColorBrush(Color.FromRgb(220, 216, 214)), FontSize = 13.5
-            };
-            content.Children.Add(hint);
-        }
-
-        private void BuildWidgetsPage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE74C", "Widgets e Personalização", "Complementos visuais e utilitários para enriquecer a sua experiência no Windows."));
-            content.Children.Add(SectionTitle("Temas de Cursor", "Alterne entre os ponteiros do macOS e Windows 11 Fluent"));
-
-            var card = SettingsCard();
-            var stack = new StackPanel();
-            card.Child = stack;
-
-            var headerGrid = new Grid();
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(46) });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            headerGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var iconBorder = new Border
-            {
-                Width = 38, Height = 38, CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromRgb(32, 120, 215)),
-                Child = new TextBlock
-                {
-                    Text = "\uE8B0", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 18,
-                    Foreground = Brushes.White, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            headerGrid.Children.Add(iconBorder);
-
-            var titleStack = new StackPanel { Margin = new Thickness(12, 0, 10, 0), VerticalAlignment = VerticalAlignment.Center };
-            titleStack.Children.Add(new TextBlock
-            {
-                Text = "Customização de Cursores", FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White
-            });
-            titleStack.Children.Add(new TextBlock
-            {
-                Text = "Substitui os ponteiros do Windows por estilos refinados (macOS, Windows 11 Fluent v3 por Arteffect10520 e variações).",
-                FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(185, 180, 178)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
-            });
-            Grid.SetColumn(titleStack, 1);
-            headerGrid.Children.Add(titleStack);
-
-            var controlsStack = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-
-            var statusBadge = new Border
-            {
-                CornerRadius = new CornerRadius(12),
-                Padding = new Thickness(10, 4, 10, 4),
-                Margin = new Thickness(0, 0, 12, 0),
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            var statusText = new TextBlock { FontSize = 11.5, FontWeight = FontWeights.SemiBold };
-            statusBadge.Child = statusText;
-
-            Action updateStatusBadge = delegate
-            {
-                bool active = dock.CurrentMacCursorEnabled;
-                statusBadge.Background = active ? new SolidColorBrush(Color.FromArgb(45, 46, 204, 113)) : new SolidColorBrush(Color.FromArgb(35, 160, 160, 160));
-                statusBadge.BorderBrush = active ? new SolidColorBrush(Color.FromRgb(46, 204, 113)) : new SolidColorBrush(Color.FromRgb(120, 120, 120));
-                statusBadge.BorderThickness = new Thickness(1);
-                statusText.Text = active ? "✓ Ativo" : "Padrão do Windows";
-                statusText.Foreground = active ? new SolidColorBrush(Color.FromRgb(70, 230, 140)) : new SolidColorBrush(Color.FromRgb(190, 185, 185));
-            };
-            updateStatusBadge();
-            controlsStack.Children.Add(statusBadge);
-
-            var toggleCheck = new CheckBox
-            {
-                IsChecked = dock.CurrentMacCursorEnabled,
-                Cursor = Cursors.Hand,
-                VerticalAlignment = VerticalAlignment.Center
-            };
-            controlsStack.Children.Add(toggleCheck);
-            Grid.SetColumn(controlsStack, 2);
-            headerGrid.Children.Add(controlsStack);
-
-            stack.Children.Add(headerGrid);
-            stack.Children.Add(Divider());
-
-            // 1. Theme Selector
-            var themeGrid = new Grid { Margin = new Thickness(0, 4, 0, 6) };
-            themeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            themeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var themeLabel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            themeLabel.Children.Add(new TextBlock { Text = "Pacote de cursores", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            themeLabel.Children.Add(new TextBlock { Text = "Selecione o estilo visual do cursor para o seu sistema", FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(175, 170, 169)) });
-            themeGrid.Children.Add(themeLabel);
-
-            var themeButtons = new WrapPanel { VerticalAlignment = VerticalAlignment.Center };
-            var themePairs = new[]
-            {
-                new { Key = "macOS", Label = "macOS Apple" },
-                new { Key = "FluentDark", Label = "Fluent Dark" },
-                new { Key = "FluentLight", Label = "Fluent Light" },
-                new { Key = "FluentArteffect", Label = "Fluent v3 (Arteffect10520)" }
-            };
-            var themePills = new Dictionary<string, Border>();
-
-            var sizeGrid = new Grid { Margin = new Thickness(0, 4, 0, 6) };
-            var arteffectBanner = new Border
-            {
-                Background = new SolidColorBrush(Color.FromArgb(40, 0, 150, 255)),
-                BorderBrush = new SolidColorBrush(Color.FromArgb(90, 0, 150, 255)),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(10),
-                Padding = new Thickness(14, 12, 14, 12), Margin = new Thickness(0, 8, 0, 8)
-            };
-            var gallery = new WrapPanel { Margin = new Thickness(-4, 0, 0, 4) };
-
-            Action refreshGallery = delegate
-            {
-                gallery.Children.Clear();
-                string curTheme = dock.CurrentCursorTheme;
-                string activeSize = dock.CurrentMacCursorSize;
-                gallery.Children.Add(BuildCursorPreviewItem("Arrow", "Normal", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("Hand", "Link", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("Wait", "Ocupado", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("AppStarting", "2º Plano", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("IBeam", "Texto", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("SizeAll", "Mover", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("SizeNS", "Vertical", curTheme, activeSize));
-                gallery.Children.Add(BuildCursorPreviewItem("SizeWE", "Horizontal", curTheme, activeSize));
-            };
-
-            Action updateThemeSelection = delegate
-            {
-                string curTheme = dock.CurrentCursorTheme;
-                foreach (var pair in themePills)
-                {
-                    bool isSel = String.Equals(pair.Key, curTheme, StringComparison.OrdinalIgnoreCase);
-                    pair.Value.Background = isSel ? new SolidColorBrush(Color.FromRgb(255, 101, 75)) : new SolidColorBrush(Color.FromRgb(55, 50, 48));
-                    pair.Value.BorderBrush = isSel ? new SolidColorBrush(Color.FromRgb(255, 130, 105)) : new SolidColorBrush(Color.FromRgb(85, 78, 75));
-                    var tb = pair.Value.Child as TextBlock;
-                    if (tb != null) tb.Foreground = isSel ? Brushes.White : new SolidColorBrush(Color.FromRgb(210, 205, 205));
-                }
-
-                sizeGrid.Visibility = String.Equals(curTheme, "macOS", StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
-
-                if (String.Equals(curTheme, "FluentArteffect", StringComparison.OrdinalIgnoreCase))
-                {
-                    string artDir = MacCursorService.ResolveThemeDir("FluentArteffect");
-                    bool has = MacCursorService.HasCursors(artDir);
-                    arteffectBanner.Visibility = Visibility.Visible;
-                    var panel = arteffectBanner.Child as StackPanel;
-                    if (panel != null)
-                    {
-                        var statusHeader = panel.Children.OfType<TextBlock>().FirstOrDefault();
-                        if (statusHeader != null)
-                        {
-                            statusHeader.Text = has ? "✓ Pacote Arteffect10520 v3 pronto e ativo!" : "Windows 11 Fluent Cursor v3 por Arteffect10520:";
-                            statusHeader.Foreground = has ? new SolidColorBrush(Color.FromRgb(70, 230, 140)) : Brushes.White;
-                        }
-                    }
-                }
-                else
-                {
-                    arteffectBanner.Visibility = Visibility.Collapsed;
-                }
-
-                refreshGallery();
-            };
-
-            foreach (var item in themePairs)
-            {
-                string tKey = item.Key;
-                var pill = new Border
-                {
-                    CornerRadius = new CornerRadius(8),
-                    BorderThickness = new Thickness(1),
-                    Padding = new Thickness(11, 6, 11, 6),
-                    Margin = new Thickness(4, 3, 0, 3),
-                    Cursor = Cursors.Hand,
-                    Child = new TextBlock { Text = item.Label, FontSize = 12, FontWeight = FontWeights.Medium }
-                };
-                pill.MouseLeftButtonUp += delegate
-                {
-                    dock.SetCursorTheme(tKey);
-                    updateThemeSelection();
-                };
-                themePills[tKey] = pill;
-                themeButtons.Children.Add(pill);
-            }
-            Grid.SetColumn(themeButtons, 1);
-            themeGrid.Children.Add(themeButtons);
-            stack.Children.Add(themeGrid);
-
-            // Arteffect helper banner
-            var bannerStack = new StackPanel();
-            bannerStack.Children.Add(new TextBlock
-            {
-                Text = "Windows 11 Fluent Cursor v3 por Arteffect10520:",
-                FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White
-            });
-            bannerStack.Children.Add(new TextBlock
-            {
-                Text = "O pacote v3 do Arteffect10520 é disponibilizado pelo autor no DeviantArt. Para usá-lo, clique no botão para abrir a pasta de cursores e cole os arquivos (.cur/.ani) extraídos.",
-                FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(210, 225, 245)),
-                TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 8)
-            });
-
-            var bannerButtons = new StackPanel { Orientation = Orientation.Horizontal };
-            var openFolderBtn = new Border
-            {
-                CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(Color.FromRgb(0, 122, 204)),
-                Padding = new Thickness(12, 6, 12, 6), Cursor = Cursors.Hand,
-                Margin = new Thickness(0, 0, 10, 0),
-                Child = new TextBlock { Text = "📂 Abrir pasta do tema", FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White }
-            };
-            openFolderBtn.MouseLeftButtonUp += delegate
-            {
-                string dir = MacCursorService.ResolveThemeDir("FluentArteffect");
-                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-                Process.Start("explorer.exe", dir);
-            };
-            bannerButtons.Children.Add(openFolderBtn);
-
-            var devArtBtn = new Border
-            {
-                CornerRadius = new CornerRadius(6),
-                Background = new SolidColorBrush(Color.FromRgb(50, 50, 60)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(90, 90, 105)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(12, 6, 12, 6), Cursor = Cursors.Hand,
-                Child = new TextBlock { Text = "🌐 Baixar no DeviantArt (Arteffect10520)", FontSize = 11.5, Foreground = Brushes.White }
-            };
-            devArtBtn.MouseLeftButtonUp += delegate
-            {
-                Process.Start(new ProcessStartInfo("https://www.deviantart.com/arteffect10520/art/Windows-11-Fluent-Cursor-v3-1009751409") { UseShellExecute = true });
-            };
-            bannerButtons.Children.Add(devArtBtn);
-            bannerStack.Children.Add(bannerButtons);
-            arteffectBanner.Child = bannerStack;
-            stack.Children.Add(arteffectBanner);
-
-            // Size Selector (Visible for macOS)
-            sizeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            sizeGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-
-            var sizeLabel = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            sizeLabel.Children.Add(new TextBlock { Text = "Tamanho do cursor (macOS)", FontSize = 13.5, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            sizeLabel.Children.Add(new TextBlock { Text = "Escolha a escala visual que melhor se adapta à resolução da sua tela", FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(175, 170, 169)) });
-            sizeGrid.Children.Add(sizeLabel);
-
-            var sizeButtons = new StackPanel { Orientation = Orientation.Horizontal, VerticalAlignment = VerticalAlignment.Center };
-            string[] sizes = new[] { "Regular", "Grande", "Extra Grande" };
-            var sizePills = new Dictionary<string, Border>();
-
-            Action updateSizeSelection = delegate
-            {
-                string cur = dock.CurrentMacCursorSize;
-                foreach (var pair in sizePills)
-                {
-                    bool isSel = String.Equals(pair.Key, cur, StringComparison.OrdinalIgnoreCase);
-                    pair.Value.Background = isSel ? new SolidColorBrush(Color.FromRgb(255, 101, 75)) : new SolidColorBrush(Color.FromRgb(55, 50, 48));
-                    pair.Value.BorderBrush = isSel ? new SolidColorBrush(Color.FromRgb(255, 130, 105)) : new SolidColorBrush(Color.FromRgb(85, 78, 75));
-                    var tb = pair.Value.Child as TextBlock;
-                    if (tb != null) tb.Foreground = isSel ? Brushes.White : new SolidColorBrush(Color.FromRgb(210, 205, 205));
-                }
-            };
-
-            foreach (string sz in sizes)
-            {
-                string targetSize = sz;
-                var pill = new Border
-                {
-                    CornerRadius = new CornerRadius(8),
-                    BorderThickness = new Thickness(1),
-                    Padding = new Thickness(12, 6, 12, 6),
-                    Margin = new Thickness(5, 0, 0, 0),
-                    Cursor = Cursors.Hand,
-                    Child = new TextBlock { Text = targetSize, FontSize = 12.5, FontWeight = FontWeights.Medium }
-                };
-                pill.MouseLeftButtonUp += delegate
-                {
-                    dock.SetMacCursorSize(targetSize);
-                    updateSizeSelection();
-                    refreshGallery();
-                };
-                sizePills[targetSize] = pill;
-                sizeButtons.Children.Add(pill);
-            }
-            updateSizeSelection();
-            Grid.SetColumn(sizeButtons, 1);
-            sizeGrid.Children.Add(sizeButtons);
-            stack.Children.Add(sizeGrid);
-
-            stack.Children.Add(Divider());
-
-            stack.Children.Add(new TextBlock
-            {
-                Text = "Prévia dos cursores:",
-                FontSize = 13, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Color.FromRgb(225, 220, 218)),
-                Margin = new Thickness(0, 4, 0, 8)
-            });
-
-            stack.Children.Add(gallery);
-            stack.Children.Add(Divider());
-
-            var restoreRow = new Grid { Margin = new Thickness(0, 4, 0, 2) };
-            restoreRow.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            restoreRow.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            restoreRow.Children.Add(new TextBlock
-            {
-                Text = "Deseja voltar aos cursores normais do Windows?",
-                FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(175, 170, 169)),
-                VerticalAlignment = VerticalAlignment.Center
-            });
-            var restoreBtn = new Border
-            {
-                CornerRadius = new CornerRadius(8),
-                Background = new SolidColorBrush(Color.FromRgb(55, 50, 48)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(85, 78, 75)),
-                BorderThickness = new Thickness(1),
-                Padding = new Thickness(14, 6, 14, 6),
-                Cursor = Cursors.Hand,
-                Child = new TextBlock { Text = "Restaurar padrão do Windows", FontSize = 12, Foreground = Brushes.White }
-            };
-            restoreBtn.MouseEnter += delegate { restoreBtn.Background = new SolidColorBrush(Color.FromRgb(70, 64, 62)); };
-            restoreBtn.MouseLeave += delegate { restoreBtn.Background = new SolidColorBrush(Color.FromRgb(55, 50, 48)); };
-            restoreBtn.MouseLeftButtonUp += delegate
-            {
-                toggleCheck.IsChecked = false;
-                dock.SetMacCursorEnabled(false);
-                updateStatusBadge();
-            };
-            Grid.SetColumn(restoreBtn, 1);
-            restoreRow.Children.Add(restoreBtn);
-            stack.Children.Add(restoreRow);
-
-            toggleCheck.Checked += delegate
-            {
-                dock.SetMacCursorEnabled(true);
-                updateStatusBadge();
-            };
-            toggleCheck.Unchecked += delegate
-            {
-                dock.SetMacCursorEnabled(false);
-                updateStatusBadge();
-            };
-
-            updateThemeSelection();
-            content.Children.Add(card);
-
-            content.Children.Add(SectionTitle("Galeria de Extensões e Widgets", "Novos recursos planejados para a B.M Flow"));
-            var futureCard = SettingsCard();
-            var futureGrid = new Grid();
-            futureGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(42) });
-            futureGrid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-
-            var starIcon = new Border
-            {
-                Width = 36, Height = 36, CornerRadius = new CornerRadius(9),
-                Background = new SolidColorBrush(Color.FromRgb(65, 58, 75)),
-                Child = new TextBlock
-                {
-                    Text = "\uE734", FontFamily = new FontFamily("Segoe MDL2 Assets"), FontSize = 17,
-                    Foreground = new SolidColorBrush(Color.FromRgb(255, 205, 80)), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-                }
-            };
-            futureGrid.Children.Add(starIcon);
-
-            var futureText = new StackPanel { Margin = new Thickness(12, 0, 0, 0), VerticalAlignment = VerticalAlignment.Center };
-            futureText.Children.Add(new TextBlock { Text = "Novos widgets em desenvolvimento", FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            futureText.Children.Add(new TextBlock
-            {
-                Text = "Widgets de monitoramento de recursos da máquina, relógio flutuante estilo macOS e atalhos dinâmicos estão sendo desenvolvidos para as próximas versões.",
-                FontSize = 12, Foreground = new SolidColorBrush(Color.FromRgb(170, 165, 165)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0)
-            });
-            Grid.SetColumn(futureText, 1);
-            futureGrid.Children.Add(futureText);
-            futureCard.Child = futureGrid;
-            content.Children.Add(futureCard);
-        }
-
-        private static FrameworkElement BuildCursorPreviewItem(string role, string label, string theme, string size)
-        {
-            var item = new Border
-            {
-                Width = 92, Height = 74, CornerRadius = new CornerRadius(10),
-                Background = new SolidColorBrush(Color.FromRgb(52, 47, 46)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(72, 65, 63)),
-                BorderThickness = new Thickness(1),
-                Margin = new Thickness(4),
-                Padding = new Thickness(4)
-            };
-
-            var stack = new StackPanel { HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            string cursorDir = MacCursorService.ResolveThemeDir(theme, size);
-            string fullPath = MacCursorService.FindCursorFile(cursorDir, role);
-            ImageSource img = !String.IsNullOrEmpty(fullPath) ? MacCursorService.LoadCursorImage(fullPath) : null;
-
-            if (img != null)
-            {
-                stack.Children.Add(new Image
-                {
-                    Source = img, Width = 28, Height = 28,
-                    HorizontalAlignment = HorizontalAlignment.Center,
-                    Stretch = Stretch.Uniform
-                });
-            }
-            else
-            {
-                stack.Children.Add(new TextBlock
-                {
-                    Text = "⮹", FontSize = 22, Foreground = Brushes.White,
-                    HorizontalAlignment = HorizontalAlignment.Center
-                });
-            }
-
-            stack.Children.Add(new TextBlock
-            {
-                Text = label, FontSize = 10.5, Foreground = new SolidColorBrush(Color.FromRgb(200, 195, 194)),
-                HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 4, 0, 0),
-                TextTrimming = TextTrimming.CharacterEllipsis, MaxWidth = 84
-            });
-
-            item.Child = stack;
-            return item;
-        }
-
-
-        private void BuildAboutPage(StackPanel content)
-        {
-            content.Children.Add(PageHeader("\uE946", "Sobre", "Informações sobre esta instalação da B.M Flow."));
-            var card = SettingsCard();
-            var stack = new StackPanel();
-            stack.Children.Add(new TextBlock { Text = "B.M Flow para Windows", FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            stack.Children.Add(new TextBlock { Text = "Uma Dock nativa, integrada à barra de tarefas, às prévias de janela e aos painéis do Windows 11.", FontSize = 13.5, Foreground = new SolidColorBrush(Color.FromRgb(190, 184, 182)), TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 5) });
-            stack.Children.Add(new TextBlock { Text = "Configurações salvas automaticamente no seu perfil do Windows.", FontSize = 12.5, Foreground = new SolidColorBrush(Color.FromRgb(157, 152, 151)), Margin = new Thickness(0, 8, 0, 0) });
-            card.Child = stack;
-            content.Children.Add(card);
-        }
-
-        private static FrameworkElement SectionTitle(string title, string subtitle)
-        {
-            var panel = new StackPanel { Margin = new Thickness(4, 18, 4, 10) };
-            panel.Children.Add(new TextBlock { Text = title, FontSize = 17, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            panel.Children.Add(new TextBlock { Text = subtitle, FontSize = 12.5, Foreground = new SolidColorBrush(Color.FromRgb(174, 168, 167)), Margin = new Thickness(0, 2, 0, 0), TextWrapping = TextWrapping.Wrap });
-            return panel;
-        }
-
-        private static Border SettingsCard()
-        {
-            return new Border
-            {
-                Background = new SolidColorBrush(Color.FromRgb(67, 61, 59)),
-                BorderBrush = new SolidColorBrush(Color.FromRgb(82, 75, 72)),
-                BorderThickness = new Thickness(1), CornerRadius = new CornerRadius(15),
-                Padding = new Thickness(20, 14, 20, 14), Margin = new Thickness(0, 0, 0, 8)
-            };
-        }
-
-        private static CheckBox Toggle(string title, string subtitle, bool value)
-        {
-            var text = new StackPanel();
-            text.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            text.Children.Add(new TextBlock { Text = subtitle, FontSize = 11.5, Foreground = new SolidColorBrush(Color.FromRgb(185, 180, 178)), TextWrapping = TextWrapping.Wrap });
-            return new CheckBox
-            {
-                Content = text, IsChecked = value, Foreground = Brushes.White,
-                Margin = new Thickness(0, 7, 0, 7), Cursor = Cursors.Hand, VerticalContentAlignment = VerticalAlignment.Center
-            };
-        }
-
-        private Border BuildThemeCard(string name)
-        {
-            Color background = Color.FromRgb(13, 62, 66);
-            Color dockColor = Color.FromRgb(43, 47, 56);
-            Color borderColor = Color.FromRgb(120, 130, 145);
-            if (name == "Liquid Glass") { dockColor = Color.FromRgb(105, 139, 153); borderColor = Color.FromRgb(225, 252, 255); }
-            else if (name == "Meia-noite") { background = Color.FromRgb(7, 48, 55); dockColor = Color.FromRgb(13, 18, 31); borderColor = Color.FromRgb(135, 153, 175); }
-            else if (name == "Rocket") { dockColor = Color.FromRgb(27, 34, 54); borderColor = Color.FromRgb(45, 118, 255); }
-            else if (name == "Prateleira Aqua") { dockColor = Color.FromRgb(65, 105, 107); borderColor = Color.FromRgb(157, 245, 238); }
-            else if (name == "Neon") { dockColor = Color.FromRgb(10, 15, 27); borderColor = Color.FromRgb(0, 238, 255); }
-            else if (name == "Canarinho") { dockColor = Color.FromRgb(139, 164, 31); borderColor = Color.FromRgb(245, 226, 43); }
-            else if (name == "Papel") { dockColor = Color.FromRgb(250, 249, 244); borderColor = Color.FromRgb(225, 225, 220); }
-            else if (name == "Flutuante") { dockColor = Color.FromArgb(25, 20, 23, 29); borderColor = Colors.Transparent; }
-
-            var card = new Border
-            {
-                Width = 214, Height = 142, Margin = new Thickness(5), Padding = new Thickness(8),
-                CornerRadius = new CornerRadius(14), Background = new SolidColorBrush(Color.FromRgb(67, 61, 59)),
-                BorderThickness = new Thickness(2), BorderBrush = Brushes.Transparent, Cursor = Cursors.Hand, Tag = name
-            };
-            var grid = new Grid();
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-            grid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(28) });
-            var preview = new Border { CornerRadius = new CornerRadius(11), Background = new SolidColorBrush(background), Margin = new Thickness(0, 0, 0, 5) };
-            var miniDock = new Border
-            {
-                Width = 146, Height = 48, CornerRadius = new CornerRadius(name == "Prateleira Aqua" ? 7 : 15),
-                Background = new SolidColorBrush(dockColor), BorderBrush = new SolidColorBrush(borderColor), BorderThickness = new Thickness(1.5),
-                HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
-            };
-            var icons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center };
-            foreach (Color color in new[] { Color.FromRgb(32, 132, 235), Color.FromRgb(248, 248, 246), Color.FromRgb(32, 132, 235) })
-                icons.Children.Add(new Border { Width = 29, Height = 29, CornerRadius = new CornerRadius(7), Background = new SolidColorBrush(color), Margin = new Thickness(5, 0, 5, 0) });
-            miniDock.Child = icons;
-            preview.Child = miniDock;
-            grid.Children.Add(preview);
-            var label = new TextBlock { Text = name, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, Foreground = Brushes.White, FontSize = 13 };
-            Grid.SetRow(label, 1);
-            grid.Children.Add(label);
-            card.Child = grid;
-            card.MouseLeftButtonUp += delegate { dock.SelectTheme(name); UpdateThemeSelection(); };
-            themeCards[name] = card;
-            return card;
-        }
-
-        private void UpdateThemeSelection()
-        {
-            foreach (var item in themeCards)
-            {
-                bool selected = item.Key == dock.CurrentTheme;
-                item.Value.BorderBrush = selected ? new SolidColorBrush(Color.FromRgb(255, 103, 76)) : Brushes.Transparent;
-                item.Value.Background = new SolidColorBrush(selected ? Color.FromRgb(82, 66, 61) : Color.FromRgb(67, 61, 59));
-            }
-        }
-
-        private static FrameworkElement SliderControl(string title, string suffix, double minimum, double maximum, double value, Action<double> changed, bool percentage = false)
-        {
-            var panel = new StackPanel { Margin = new Thickness(2, 7, 2, 7) };
-            var caption = new Grid();
-            caption.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            caption.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            caption.Children.Add(new TextBlock { Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold, Foreground = Brushes.White });
-            var valueText = new TextBlock { Foreground = new SolidColorBrush(Color.FromRgb(190, 184, 182)), FontSize = 13 };
-            Grid.SetColumn(valueText, 1);
-            caption.Children.Add(valueText);
-            panel.Children.Add(caption);
-            var slider = new Slider { Minimum = minimum, Maximum = maximum, Value = value, TickFrequency = 1, IsSnapToTickEnabled = true, IsMoveToPointEnabled = true, Margin = new Thickness(0, 10, 0, 4) };
-            Action updateLabel = delegate
-            {
-                valueText.Text = percentage ? Math.Round(slider.Value / 255.0 * 100) + " " + suffix : Math.Round(slider.Value) + " " + suffix;
-            };
-            updateLabel();
-            slider.ValueChanged += delegate { updateLabel(); changed(slider.Value); };
-            panel.Children.Add(slider);
-            return panel;
-        }
-
-        private static FrameworkElement ChoiceControl(string title, IEnumerable<string> choices, string value, Action<string> changed)
-        {
-            var grid = new Grid { Margin = new Thickness(2, 7, 2, 7) };
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
-            grid.Children.Add(new TextBlock
-            {
-                Text = title, FontSize = 14, FontWeight = FontWeights.SemiBold,
-                Foreground = Brushes.White, VerticalAlignment = VerticalAlignment.Center
-            });
-            var combo = new ComboBox
-            {
-                ItemsSource = choices.ToList(), SelectedItem = value,
-                Padding = new Thickness(8, 5, 8, 5), Cursor = Cursors.Hand
-            };
-            combo.SelectionChanged += delegate
-            {
-                string selected = combo.SelectedItem as string;
-                if (!String.IsNullOrWhiteSpace(selected)) changed(selected);
-            };
-            Grid.SetColumn(combo, 1);
-            grid.Children.Add(combo);
-            return grid;
-        }
-
-        private static Border Divider()
-        {
-            return new Border { Height = 1, Background = new SolidColorBrush(Color.FromRgb(88, 81, 78)), Margin = new Thickness(0, 7, 0, 7) };
-        }
-    }
-
-    internal sealed class TaskApp
-    {
-        public string Name;
-        public string Target;
-        public string Arguments;
-        public string Identity;
-        public string AppUserModelId;
-        public IntPtr WindowHandle;
-        public readonly List<IntPtr> WindowHandles = new List<IntPtr>();
-        public readonly List<string> WindowTitles = new List<string>();
-        public ImageSource Icon;
-        public Color? AccentColor;
-        public bool IsPinned;
-        public bool IsRunningInBackground;
-
-        public Color? GetAccentColor()
-        {
-            if (AccentColor.HasValue) return AccentColor;
-            if (Icon != null)
-            {
-                AccentColor = DockWindow.ExtractAccentColor(Icon);
-            }
-            return AccentColor;
-        }
-    }
-
-    internal sealed class RecentDestination
-    {
-        public string Name;
-        public string Path;
-        public bool IsFolder;
-    }
-
-    internal static class AudioController
-    {
-        private const int Render = 0;
-        private const int Multimedia = 1;
-
-        public static bool TryGetState(out float volume, out bool muted)
-        {
-            volume = 0;
-            muted = false;
-            IAudioEndpointVolume endpoint = GetEndpoint();
-            if (endpoint == null) return false;
-            try
-            {
-                endpoint.GetMasterVolumeLevelScalar(out volume);
-                endpoint.GetMute(out muted);
-                return true;
-            }
-            catch { return false; }
-            finally { Marshal.FinalReleaseComObject(endpoint); }
-        }
-
-        public static void ToggleMute()
-        {
-            IAudioEndpointVolume endpoint = GetEndpoint();
-            if (endpoint == null) return;
-            try
-            {
-                bool muted;
-                endpoint.GetMute(out muted);
-                Guid context = Guid.Empty;
-                endpoint.SetMute(!muted, ref context);
-            }
-            catch { }
-            finally { Marshal.FinalReleaseComObject(endpoint); }
-        }
-
-        private static IAudioEndpointVolume GetEndpoint()
-        {
-            IMMDeviceEnumerator enumerator = null;
-            IMMDevice device = null;
-            try
-            {
-                enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
-                Marshal.ThrowExceptionForHR(enumerator.GetDefaultAudioEndpoint(Render, Multimedia, out device));
-                Guid iid = typeof(IAudioEndpointVolume).GUID;
-                object endpoint;
-                Marshal.ThrowExceptionForHR(device.Activate(ref iid, 23, IntPtr.Zero, out endpoint));
-                return (IAudioEndpointVolume)endpoint;
-            }
-            catch { return null; }
-            finally
-            {
-                if (device != null) Marshal.FinalReleaseComObject(device);
-                if (enumerator != null) Marshal.FinalReleaseComObject(enumerator);
-            }
-        }
-
-        [ComImport, Guid("BCDE0395-E52F-467C-8E3D-C4579291692E")]
-        private class MMDeviceEnumerator { }
-
-        [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("A95664D2-9614-4F35-A746-DE8DB63617E6")]
-        private interface IMMDeviceEnumerator
-        {
-            int NotImpl1();
-            [PreserveSig]
-            int GetDefaultAudioEndpoint(int dataFlow, int role, out IMMDevice endpoint);
-        }
-
-        [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("D666063F-1587-4E43-81F1-B948E807363F")]
-        private interface IMMDevice
-        {
-            [PreserveSig]
-            int Activate(ref Guid id, int clsCtx, IntPtr activationParams, [MarshalAs(UnmanagedType.IUnknown)] out object interfacePointer);
-        }
-
-        [ComImport, InterfaceType(ComInterfaceType.InterfaceIsIUnknown), Guid("5CDF2C82-841E-4546-9722-0CF74078229A")]
-        private interface IAudioEndpointVolume
-        {
-            int NotImpl1();
-            int NotImpl2();
-            int GetChannelCount(out int channelCount);
-            int SetMasterVolumeLevel(float levelDB, ref Guid eventContext);
-            int SetMasterVolumeLevelScalar(float level, ref Guid eventContext);
-            int GetMasterVolumeLevel(out float levelDB);
-            [PreserveSig]
-            int GetMasterVolumeLevelScalar(out float level);
-            int SetChannelVolumeLevel(uint channelNumber, float levelDB, ref Guid eventContext);
-            int SetChannelVolumeLevelScalar(uint channelNumber, float level, ref Guid eventContext);
-            int GetChannelVolumeLevel(uint channelNumber, out float levelDB);
-            int GetChannelVolumeLevelScalar(uint channelNumber, out float level);
-            [PreserveSig]
-            int SetMute([MarshalAs(UnmanagedType.Bool)] bool isMuted, ref Guid eventContext);
-            [PreserveSig]
-            int GetMute([MarshalAs(UnmanagedType.Bool)] out bool isMuted);
-        }
-    }
 }

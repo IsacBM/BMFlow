@@ -1,14 +1,38 @@
+param(
+    [string] $OutputPath
+)
+
 $ErrorActionPreference = 'Stop'
 
 $compiler = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-$output = Join-Path $PSScriptRoot 'BMFlow.exe'
+$defaultOutput = Join-Path $PSScriptRoot 'BMFlow.exe'
+$output = if ([String]::IsNullOrWhiteSpace($OutputPath)) {
+    $defaultOutput
+} elseif ([IO.Path]::IsPathRooted($OutputPath)) {
+    [IO.Path]::GetFullPath($OutputPath)
+} else {
+    [IO.Path]::GetFullPath((Join-Path $PSScriptRoot $OutputPath))
+}
 $legacyOutput = Join-Path $PSScriptRoot 'DockBar.exe'
-$source = Join-Path $PSScriptRoot 'DockBar.cs'
+$sourceRoot = Join-Path $PSScriptRoot 'src'
 $startIcon = Join-Path $PSScriptRoot 'Assets\Images\windows11.png'
 $assemblyRoot = Join-Path $env:WINDIR 'Microsoft.NET\assembly'
 
 if (-not (Test-Path -LiteralPath $compiler)) {
     throw 'O compilador do .NET Framework não foi encontrado neste Windows.'
+}
+
+$sources = Get-ChildItem -LiteralPath $sourceRoot -Filter '*.cs' -Recurse -File |
+    Sort-Object FullName |
+    Select-Object -ExpandProperty FullName
+
+if (-not $sources) {
+    throw "Nenhum arquivo C# foi encontrado em $sourceRoot."
+}
+
+$outputDirectory = Split-Path -Parent $output
+if (-not (Test-Path -LiteralPath $outputDirectory)) {
+    New-Item -ItemType Directory -Path $outputDirectory -Force | Out-Null
 }
 
 function Find-FrameworkAssembly([string] $name) {
@@ -38,13 +62,13 @@ $resourceArgument = "/resource:$startIcon,windows11.png"
     /reference:$uiAutomationTypes `
     /reference:System.dll `
     /reference:System.Core.dll `
-    $source
+    $sources
 
 if ($LASTEXITCODE -ne 0) {
     throw "A compilação falhou com o código $LASTEXITCODE."
 }
 
-if ((Test-Path -LiteralPath $legacyOutput) -and $legacyOutput -ne $output) {
+if ($output -eq $defaultOutput -and (Test-Path -LiteralPath $legacyOutput) -and $legacyOutput -ne $output) {
     Remove-Item -LiteralPath $legacyOutput -Force
 }
 

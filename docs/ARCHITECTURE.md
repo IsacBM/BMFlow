@@ -2,7 +2,7 @@
 
 ## Visão geral
 
-A B.M Flow é uma aplicação desktop WPF compilada como `winexe`. O projeto evita dependências externas e mantém a implementação em `DockBar.cs`, permitindo que o compilador do .NET Framework presente no Windows gere o executável diretamente.
+A B.M Flow é uma aplicação desktop WPF compilada como `winexe`. O projeto evita dependências externas e organiza a implementação por domínio dentro de `src/`. Tanto o projeto `BMFlow.csproj` quanto o script que usa o compilador do .NET Framework consomem os mesmos arquivos.
 
 ```text
 App
@@ -20,19 +20,19 @@ App
 
 ## Componentes principais
 
-| Componente | Responsabilidade |
-| --- | --- |
-| `App` | Ponto de entrada, instância única e captura de falhas não tratadas. |
-| `DockWindow` | Janela principal, estado da dock, descoberta de apps, menus, bandeja e ciclo de vida. |
-| `WindowCommands` | Operações de ativar, restaurar, minimizar e fechar janelas. |
-| `PreviewWindow` | Miniaturas DWM, agrupamento, paginação e navegação por teclado. |
-| `MacCursorService` | Instalação local dos arquivos, backup, aplicação e restauração do esquema de cursor. |
-| `WorkspaceManager` | Persistência e seleção de espaços de trabalho. |
-| `WorkspaceHudWindow` | Retorno visual ao alternar espaços de trabalho. |
-| `DesktopWidgetWindow` | Widget reposicionável de data e hora. |
-| `DockMascot` | Animações, comportamentos e interação dos mascotes. |
-| `DockSettingsWindow` | Interface das páginas de configuração. |
-| `AudioController` | Consulta e alteração de volume por interfaces de áudio do Windows. |
+| Componente | Caminho | Responsabilidade |
+| --- | --- | --- |
+| `App` | `src/App.cs` | Ponto de entrada, instância única e captura de falhas não tratadas. |
+| `DockWindow` | `src/Dock/` | Janela principal, estado da dock, descoberta de apps, menus, bandeja e ciclo de vida. |
+| `WindowCommands` | `src/WindowsInterop/` | Operações de ativar, restaurar, minimizar e fechar janelas. |
+| `PreviewWindow` | `src/Preview/` | Miniaturas DWM, agrupamento, paginação e navegação por teclado. |
+| `MacCursorService` | `src/Cursors/` | Instalação local dos arquivos, backup, aplicação e restauração do esquema de cursor. |
+| `WorkspaceManager` | `src/Workspaces/` | Persistência e seleção de espaços de trabalho. |
+| `WorkspaceHudWindow` | `src/Workspaces/` | Retorno visual ao alternar espaços de trabalho. |
+| `DesktopWidgetWindow` | `src/Widgets/` | Widget reposicionável de data e hora. |
+| `DockMascot` | `src/Mascots/` | Animações, comportamentos e interação dos mascotes. |
+| `DockSettingsWindow` | `src/Settings/` | Interface das páginas de configuração. |
+| `AudioController` | `src/WindowsInterop/` | Consulta e alteração de volume por interfaces de áudio do Windows. |
 
 ## Persistência
 
@@ -61,20 +61,26 @@ Ao alterar essa área:
 
 Timers do WPF atualizam a interface e coordenam prévias, ocultação e detecção de tela cheia. Timers de thread monitoram volume, bateria, rede e estado de itens fixados. Trabalho fora da thread de UI deve retornar pelo `Dispatcher` e evitar acessar controles diretamente.
 
-## Direção de evolução
-
-O arquivo único reduz a barreira de build, mas aumenta o custo de manutenção. Uma futura separação pode preservar o build simples agrupando classes por domínio:
+## Organização do código
 
 ```text
 src/
 ├── App.cs
 ├── Dock/
-├── WindowsInterop/
-├── Preview/
-├── Workspaces/
-├── Widgets/
+├── Settings/
 ├── Mascots/
-└── Settings/
+├── Workspaces/
+├── Preview/
+├── Cursors/
+├── Widgets/
+├── Models/
+├── Properties/
+└── WindowsInterop/
 ```
 
-Essa migração deve ser incremental e manter um build reproduzível antes de cada etapa.
+O `DockWindow` ainda concentra a orquestração principal. Novas extrações devem ser incrementais: primeiro isolar serviços sem estado visual e, depois, componentes de interface com limites claros. Cada etapa precisa manter funcionais os dois builds:
+
+```text
+build.ps1          -> BMFlow.exe na raiz
+BMFlow.csproj      -> bin/Release/net48/BMFlow.exe
+```

@@ -1,0 +1,38 @@
+name: Guardião Automático
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: guardiao-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verificar:
+    name: Verificar e compilar
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Baixar o código
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Executar o Guardião
+        shell: pwsh
+        run: .\scripts\verify.ps1 -OutputDirectory artifacts\ci
+
+      - name: Publicar executável validado
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: BMFlow-${{ github.sha }}
+          path: artifacts/ci/*
+          if-no-files-found: error
+          retention-days: 14

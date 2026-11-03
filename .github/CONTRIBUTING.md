@@ -21,16 +21,19 @@ Obrigado por considerar uma contribuição para a B.M Flow. Queremos manter um a
 3. Compile:
 
    ```powershell
-   powershell -ExecutionPolicy Bypass -File .\build.ps1
+   powershell -ExecutionPolicy Bypass -File .\scripts\verify.ps1
    ```
 
 4. Execute `BMFlow.exe` e valide a mudança no Windows 10 ou 11.
 
-O build usa o compilador do .NET Framework instalado no Windows; não há restauração de pacotes.
+O Guardião usa o compilador do .NET Framework instalado no Windows, verifica a saúde do repositório e gera o executável em `artifacts/verification/`; não há restauração de pacotes.
+
+Se você possui o .NET SDK ou Visual Studio, também pode compilar `BMFlow.csproj`. Antes de enviar o pull request, valide sempre o `build.ps1`, pois ele mantém o caminho portátil sem SDK.
 
 ## Convenções
 
-- Preserve compatibilidade com o compilador C# do .NET Framework usado por `build.ps1`.
+- Preserve compatibilidade com C# 7.3 e com o compilador do .NET Framework usado por `build.ps1`.
+- Coloque novas classes no domínio correspondente dentro de `src/`; evite voltar a concentrar recursos diferentes em `DockWindow`.
 - Prefira mudanças pequenas e focadas.
 - Use nomes claros no código e mantenha textos da interface em português enquanto não houver uma camada de localização.
 - Trate chamadas Win32, acesso ao Registro e manipulação de janelas como áreas de risco: valide falhas e restaure o estado do sistema ao encerrar.
@@ -50,7 +53,7 @@ Como o projeto ainda não possui testes automatizados, descreva no pull request 
 - persistência após reiniciar o aplicativo;
 - restauração do cursor e da barra de tarefas ao sair.
 
-Feche a B.M Flow antes de recompilar, pois o Windows bloqueia a substituição de um executável em uso.
+O Guardião compila em `artifacts/` e pode ser executado com a B.M Flow aberta. Feche a aplicação apenas ao usar `build.ps1` sem um caminho de saída, pois esse comando substitui o executável da raiz.
 
 ## Commits e pull requests
 
