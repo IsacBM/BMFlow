@@ -9,7 +9,7 @@ O projeto está aberto para aprender, evoluir e construir junto com a comunidade
 ![Windows 11](https://img.shields.io/badge/Windows%20%7C%2011-0078D4?logo=windows&logoColor=white)
 ![C#](https://img.shields.io/badge/C%23-WPF-512BD4?logo=dotnet&logoColor=white)
 ![Licença MIT](https://img.shields.io/badge/c%C3%B3digo-MIT-green)
-[![Guardião Automático](https://github.com/IsacBM/DockBar/actions/workflows/ci.yml/badge.svg)](https://github.com/IsacBM/DockBar/actions/workflows/ci.yml)
+[![Guardião Automático](https://github.com/IsacBM/BMFlow/actions/workflows/ci.yml/badge.svg)](https://github.com/IsacBM/BMFlow/actions/workflows/ci.yml)
 
 ## Visão geral
 

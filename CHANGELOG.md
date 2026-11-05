@@ -4,6 +4,8 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 
 ## [Não lançado]
 
+## [0.2.0] - 2026-11-05
+
 ### Adicionado
 
 - Posicionamento da dock nas bordas inferior, superior, esquerda e direita, com layout vertical nas laterais.
@@ -25,6 +27,7 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 - Nas laterais, as prévias de um mesmo aplicativo agora são empilhadas verticalmente e paginadas quando não cabem na tela.
 - A onda de ampliação acompanha o eixo vertical nas laterais, crescendo para dentro da tela sem deformar o indicador de execução.
 - O mascote agora é exclusivo da borda inferior e é desativado permanentemente ao mover a dock para outra borda.
+- Monitores de áudio, rede, bateria, contraste e aplicativos foram consolidados e desacelerados em repouso, reduzindo em cerca de 62% o uso médio de CPU observado com o mascote ativo.
 
 ### Corrigido
 
@@ -33,6 +36,9 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 - Ao dormir, o mascote agora descansa exatamente no local onde parou na Dock em vez de ser teleportado para a origem.
 - O indicador de execução acompanha o centro visual do ícone durante a onda nas laterais, sem ser ampliado.
 - Na borda superior, o indicador de execução aparece acima dos ícones e não se mistura com eles durante a onda.
+- A faixa da Dock auto-oculta na borda inferior agora fica mais discreta sem prejudicar a revelação pelo cursor.
+- Passar o cursor sobre o mascote não revela mais a Dock enquanto ela está oculta.
+- Elementos visuais antigos de aplicativos são liberados ao reconstruir a Dock, evitando retenção cumulativa de memória.
 
 ## [0.1.0] - 2026-11-03
 
@@ -44,5 +50,6 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 - Temas, transparência, auto-ocultação e integração AppBar.
 - Espaços de trabalho, widget de relógio, mascotes e temas de cursor.
 
-[Não lançado]: https://github.com/IsacBM/DockBar/commits/main
-[0.1.0]: https://github.com/IsacBM/DockBar/commit/e5c2b5a
+[Não lançado]: https://github.com/IsacBM/BMFlow/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/IsacBM/BMFlow/compare/e5c2b5a...v0.2.0
+[0.1.0]: https://github.com/IsacBM/BMFlow/commit/e5c2b5a

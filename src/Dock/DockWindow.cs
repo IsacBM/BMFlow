@@ -146,6 +146,7 @@ namespace DockBar
         private int systemRefreshRunning;
         private volatile bool isClosing;
         private DateTime nextTaskRefreshUtc = DateTime.MinValue;
+        private DateTime nextSystemInfoRefreshUtc = DateTime.MinValue;
         private int lastForegroundTaskRefreshTick;
         private bool positionDockPending;
         private bool autoHideEnabled = true;
@@ -240,15 +241,6 @@ namespace DockBar
         private sealed class SystemSnapshot
         {
             public HashSet<string> ProcessNames;
-            public string BatteryGlyph;
-            public bool CriticalBattery;
-            public bool LowBattery;
-            public bool Charging;
-            public string VolumeGlyph;
-            public string NetworkGlyph;
-            public string BatteryLabel;
-            public string NetworkLabel;
-            public string VolumeLabel;
             public bool? RecycleFull;
             public ImageSource RecycleSource;
         }
@@ -364,11 +356,11 @@ namespace DockBar
 
             // O restante do estado pode ser atualizado lentamente, mas o
             // contraste precisa acompanhar trocas de página e wallpaper.
-            adaptiveContrastTimer = new System.Threading.Timer(SampleAdaptiveContrastBackground, null, 120, 160);
-            volumeMonitorTimer = new System.Threading.Timer(MonitorVolumeBackground, null, 180, 220);
-            batteryMonitorTimer = new System.Threading.Timer(MonitorBatteryBackground, null, 240, 750);
-            networkMonitorTimer = new System.Threading.Timer(MonitorNetworkBackground, null, 320, 900);
-            pinnedStateMonitorTimer = new System.Threading.Timer(MonitorPinnedStateBackground, null, 500, 520);
+            adaptiveContrastTimer = new System.Threading.Timer(SampleAdaptiveContrastBackground, null, 180, 500);
+            volumeMonitorTimer = new System.Threading.Timer(MonitorVolumeBackground, null, 220, 750);
+            batteryMonitorTimer = new System.Threading.Timer(MonitorBatteryBackground, null, 320, 5000);
+            networkMonitorTimer = new System.Threading.Timer(MonitorNetworkBackground, null, 450, 3000);
+            pinnedStateMonitorTimer = new System.Threading.Timer(MonitorPinnedStateBackground, null, 800, 2000);
 
             previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(320) };
             previewTimer.Tick += delegate
@@ -450,6 +442,10 @@ namespace DockBar
             dockRoot = root;
             root.MouseEnter += delegate
             {
+                // Com a Dock recolhida, apenas a borda física da tela deve
+                // revelá-la. Assim o mascote continua interativo sem abrir a
+                // barra quando o cursor passa sobre ele.
+                if (autoHideEnabled && dockAutoHidden) return;
                 edgeRevealPending = false;
                 edgeRevealTimer.Stop();
                 autoHideTimer.Stop();
@@ -3926,7 +3922,11 @@ namespace DockBar
             if (dateText != null) dateText.Text = now.Day.ToString(CultureInfo.InvariantCulture);
             RefreshClock(now);
             RefreshTaskItems();
-            RefreshSystemInfoAsync();
+            if (DateTime.UtcNow >= nextSystemInfoRefreshUtc)
+            {
+                nextSystemInfoRefreshUtc = DateTime.UtcNow.AddSeconds(2);
+                RefreshSystemInfoAsync();
+            }
         }
 
         private void RefreshClock(DateTime now)
@@ -4248,8 +4248,7 @@ namespace DockBar
         {
             var snapshot = new SystemSnapshot
             {
-                ProcessNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase),
-                VolumeGlyph = "\uE995"
+                ProcessNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
             };
 
             Process[] processes = null;
@@ -4268,26 +4267,6 @@ namespace DockBar
                     foreach (Process process in processes) process.Dispose();
             }
 
-            BatteryVisualState battery = ReadBatteryVisualState();
-            snapshot.BatteryGlyph = battery.Glyph;
-            snapshot.CriticalBattery = battery.Critical;
-            snapshot.LowBattery = battery.Low;
-            snapshot.Charging = battery.Charging;
-
-            bool muted;
-            float volume;
-            string volumeLabel = "Volume";
-            if (AudioController.TryGetState(out volume, out muted))
-            {
-                snapshot.VolumeGlyph = VolumeGlyphFor(volume, muted);
-                volumeLabel = "Volume " + (muted ? 0 : (int)Math.Round(volume * 100)) + "%";
-            }
-            snapshot.BatteryLabel = battery.Label;
-            snapshot.VolumeLabel = volumeLabel;
-            NetworkVisualState network = ReadNetworkVisualState();
-            snapshot.NetworkGlyph = network.Glyph;
-            snapshot.NetworkLabel = network.Label;
-
             if (recycleBinImage != null)
             {
                 var recycleInfo = new RecycleBinInfo { Size = Marshal.SizeOf(typeof(RecycleBinInfo)) };
@@ -4305,26 +4284,6 @@ namespace DockBar
         {
             foreach (var item in runningDots)
                 item.Value.Visibility = snapshot.ProcessNames.Contains(item.Key) ? Visibility.Visible : Visibility.Hidden;
-
-            if (batteryText.Text != snapshot.BatteryGlyph) batteryText.Text = snapshot.BatteryGlyph;
-            if (volumeText.Text != snapshot.VolumeGlyph) volumeText.Text = snapshot.VolumeGlyph;
-            if (!String.IsNullOrWhiteSpace(snapshot.NetworkGlyph) && networkText.Text != snapshot.NetworkGlyph)
-                networkText.Text = snapshot.NetworkGlyph;
-            lastVolumeGlyph = snapshot.VolumeGlyph;
-            lastNetworkGlyph = snapshot.NetworkGlyph;
-            lastNetworkLabel = snapshot.NetworkLabel;
-            Brush batteryBrush = snapshot.CriticalBattery ? new SolidColorBrush(Color.FromRgb(255, 80, 80))
-                : snapshot.LowBattery ? new SolidColorBrush(Color.FromRgb(255, 184, 71))
-                : snapshot.Charging ? new SolidColorBrush(Color.FromRgb(105, 220, 130))
-                : darkMode ? Brushes.White : new SolidColorBrush(Color.FromRgb(45, 45, 45));
-            var currentBrush = batteryText.Foreground as SolidColorBrush;
-            var desiredBrush = batteryBrush as SolidColorBrush;
-            if (currentBrush == null || desiredBrush == null || currentBrush.Color != desiredBrush.Color)
-                batteryText.Foreground = batteryBrush;
-
-            SetToolTipText(batteryText, snapshot.BatteryLabel);
-            SetToolTipText(networkText, snapshot.NetworkLabel);
-            SetToolTipText(volumeText, snapshot.VolumeLabel);
             SetToolTipText(trayArrowText, "Ícones ocultos");
 
             if (snapshot.RecycleFull.HasValue)
@@ -4332,7 +4291,6 @@ namespace DockBar
                 if (snapshot.RecycleSource != null) recycleBinImage.Source = snapshot.RecycleSource;
                 recycleBinFull = snapshot.RecycleFull.Value;
             }
-            ApplyReadableSystemStyle();
         }
 
         public void RefreshTaskItemsImmediate()
@@ -4352,7 +4310,7 @@ namespace DockBar
         {
             DateTime now = DateTime.UtcNow;
             if (now < nextTaskRefreshUtc) return;
-            nextTaskRefreshUtc = now.AddMilliseconds(250);
+            nextTaskRefreshUtc = now.AddMilliseconds(dockAutoHidden ? 3000 : 1000);
             if (Interlocked.CompareExchange(ref taskRefreshRunning, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -4392,9 +4350,35 @@ namespace DockBar
                 String.Join(",", a.WindowHandles.Select(h => h.ToInt64()).OrderBy(h => h).Select(h => h.ToString(CultureInfo.InvariantCulture)))));
             if (signature == taskSignature) return;
             taskSignature = signature;
+            ReleaseTaskItemVisuals();
             taskItems.Children.Clear();
             foreach (var app in apps) taskItems.Children.Add(TaskTile(app));
             waveLayoutDirty = true;
+        }
+
+        private void ReleaseTaskItemVisuals()
+        {
+            var released = new HashSet<FrameworkElement>();
+            foreach (FrameworkElement item in taskItems.Children.OfType<FrameworkElement>())
+            {
+                released.Add(item);
+                var panel = item as Panel;
+                if (panel == null) continue;
+                foreach (FrameworkElement child in panel.Children.OfType<FrameworkElement>())
+                    released.Add(child);
+            }
+            if (released.Count == 0) return;
+
+            magnifyIcons.RemoveAll(item => released.Contains(item));
+            foreach (FrameworkElement item in released) magnifyGrowth.Remove(item);
+            wavePassives.RemoveAll(item => released.Contains(item));
+            themedTiles.RemoveAll(item => released.Contains(item));
+            themedText.RemoveAll(item => released.Contains(item));
+            themedSeparators.RemoveAll(item => released.Contains(item));
+            waveSamples.RemoveAll(sample =>
+                (sample.Icon != null && released.Contains(sample.Icon)) ||
+                (sample.Container != null && released.Contains(sample.Container)));
+            if (waveTopContainer != null && released.Contains(waveTopContainer)) waveTopContainer = null;
         }
 
         private List<TaskApp> ReadTaskApps()

@@ -13,6 +13,7 @@ namespace DockBar
         private const string DockTopPosition = "Superior";
         private const string DockLeftPosition = "Esquerda";
         private const string DockRightPosition = "Direita";
+        private const double BottomAutoHideRevealThickness = 2;
 
         private string dockPosition = DockBottomPosition;
         private Grid dockRoot;
@@ -257,7 +258,9 @@ namespace DockBar
             if (IsDockBottom)
             {
                 double shellTopInsideWindow = Math.Max(0, ActualHeight - dockShell.Margin.Bottom - shellHeight);
-                return area.Bottom - shellTopInsideWindow - 7;
+                // A revelação usa a borda física da tela (PollDockRevealEdge),
+                // portanto só precisamos manter um filete visual discreto aqui.
+                return area.Bottom - shellTopInsideWindow - BottomAutoHideRevealThickness;
             }
             return RevealedDockTopForPosition();
         }
