@@ -28,9 +28,10 @@ namespace DockBar
     public sealed partial class DockWindow : Window
     {
         private static readonly int currentProcessId = ReadCurrentProcessId();
+        private const string WindowsTerminalAppId = "Microsoft.WindowsTerminal_8wekyb3d8bbwe!App";
         private static readonly FontFamily windowsSystemIconFont = new FontFamily("Segoe Fluent Icons");
         private readonly Dictionary<string, Border> runningDots = new Dictionary<string, Border>();
-        private static readonly Dictionary<string, ImageSource> iconCache = new Dictionary<string, ImageSource>(StringComparer.OrdinalIgnoreCase);
+        private static readonly Dictionary<string, WeakReference> iconCache = new Dictionary<string, WeakReference>(StringComparer.OrdinalIgnoreCase);
         private static readonly object iconCacheLock = new object();
         private readonly List<FrameworkElement> magnifyIcons = new List<FrameworkElement>();
         private readonly Dictionary<FrameworkElement, double> magnifyGrowth = new Dictionary<FrameworkElement, double>();
@@ -45,6 +46,7 @@ namespace DockBar
         private readonly System.Threading.Timer batteryMonitorTimer;
         private readonly System.Threading.Timer networkMonitorTimer;
         private readonly System.Threading.Timer pinnedStateMonitorTimer;
+        private System.Threading.Timer memoryTrimTimer;
         private int adaptiveContrastSampling;
         private int volumeMonitorRunning;
         private int batteryMonitorRunning;
@@ -107,8 +109,6 @@ namespace DockBar
         private string taskSignature = String.Empty;
         private static readonly List<string> cachedPinnedNames = new List<string>();
         private static DateTime pinnedNamesCacheExpiresUtc = DateTime.MinValue;
-        private static readonly List<string> cachedTaskbarButtonNames = new List<string>();
-        private static DateTime taskbarButtonNamesCacheExpiresUtc = DateTime.MinValue;
         private static readonly List<TaskApp> cachedPackagedApps = new List<TaskApp>();
         private static readonly object packagedAppsCacheLock = new object();
         private static DateTime packagedAppsCacheExpiresUtc = DateTime.MinValue;
@@ -336,6 +336,7 @@ namespace DockBar
                 batteryMonitorTimer.Dispose();
                 networkMonitorTimer.Dispose();
                 pinnedStateMonitorTimer.Dispose();
+                if (memoryTrimTimer != null) memoryTrimTimer.Dispose();
                 previewSettleTimer.Stop();
                 ReleaseStartMenuHook();
                 ReleaseTaskbarVisibilityGuard();
@@ -356,11 +357,11 @@ namespace DockBar
 
             // O restante do estado pode ser atualizado lentamente, mas o
             // contraste precisa acompanhar trocas de página e wallpaper.
-            adaptiveContrastTimer = new System.Threading.Timer(SampleAdaptiveContrastBackground, null, 180, 500);
-            volumeMonitorTimer = new System.Threading.Timer(MonitorVolumeBackground, null, 220, 750);
-            batteryMonitorTimer = new System.Threading.Timer(MonitorBatteryBackground, null, 320, 5000);
-            networkMonitorTimer = new System.Threading.Timer(MonitorNetworkBackground, null, 450, 3000);
-            pinnedStateMonitorTimer = new System.Threading.Timer(MonitorPinnedStateBackground, null, 800, 2000);
+            adaptiveContrastTimer = new System.Threading.Timer(SampleAdaptiveContrastBackground, null, 300, 1000);
+            volumeMonitorTimer = new System.Threading.Timer(MonitorVolumeBackground, null, 450, 1500);
+            batteryMonitorTimer = new System.Threading.Timer(MonitorBatteryBackground, null, 900, 10000);
+            networkMonitorTimer = new System.Threading.Timer(MonitorNetworkBackground, null, 1200, 10000);
+            pinnedStateMonitorTimer = new System.Threading.Timer(MonitorPinnedStateBackground, null, 1800, 15000);
 
             previewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(320) };
             previewTimer.Tick += delegate
@@ -428,12 +429,12 @@ namespace DockBar
                     return;
                 }
                 pinnedNamesCacheExpiresUtc = DateTime.MinValue;
-                taskbarButtonNamesCacheExpiresUtc = DateTime.MinValue;
                 nextTaskRefreshUtc = DateTime.MinValue;
                 RefreshTaskItems();
             };
             SystemEvents.PowerModeChanged += OnPowerModeChanged;
             SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+            ScheduleMemoryTrim(7000);
         }
 
         private UIElement BuildDock()
@@ -493,16 +494,21 @@ namespace DockBar
 
             var menu = new ContextMenu();
             ConfigureDockContextMenu(menu, dockShell);
+            menu.MinWidth = 300;
             dockMenu = menu;
             menu.Opened += delegate { SyncDockMenu(); };
-            var settingsItem = new MenuItem { Header = "Configurações…" };
+            var settingsItem = new MenuItem
+            {
+                Header = "Configurações…",
+                Icon = DockMenuIcon("\uE713"),
+                Background = new SolidColorBrush(Color.FromArgb(170, 27, 66, 119))
+            };
             settingsItem.Click += delegate { OpenSettingsWindow(); };
             menu.Items.Add(settingsItem);
             menu.Items.Add(new System.Windows.Controls.Separator());
-            var wsMenu = new MenuItem { Header = "Espaços de Trabalho" };
+            var wsMenu = new MenuItem { Header = "Espaços de Trabalho", Icon = DockMenuIcon("\uE8B7") };
             menu.Items.Add(wsMenu);
-            menu.Items.Add(new System.Windows.Controls.Separator());
-            var themeMenu = new MenuItem { Header = "Tema" };
+            var themeMenu = new MenuItem { Header = "Tema", Icon = DockMenuIcon("\uE790") };
             themeMenu.Items.Add(ThemeItem("Nativo", dockTheme == "Nativo"));
             themeMenu.Items.Add(ThemeItem("Liquid Glass", dockTheme == "Liquid Glass"));
             themeMenu.Items.Add(ThemeItem("Meia-noite", dockTheme == "Meia-noite"));
@@ -513,8 +519,7 @@ namespace DockBar
             themeMenu.Items.Add(ThemeItem("Papel", dockTheme == "Papel"));
             themeMenu.Items.Add(ThemeItem("Flutuante", dockTheme == "Flutuante"));
             menu.Items.Add(themeMenu);
-            menu.Items.Add(new System.Windows.Controls.Separator());
-            var sizeMenu = new MenuItem { Header = "Tamanho e posição" };
+            var sizeMenu = new MenuItem { Header = "Tamanho e posição", Icon = DockMenuIcon("\uE799") };
             var positionMenu = new MenuItem { Header = "Posição na tela" };
             foreach (string position in DockPositionChoices)
             {
@@ -549,8 +554,7 @@ namespace DockBar
                 SaveSettings();
             }));
             menu.Items.Add(sizeMenu);
-            menu.Items.Add(new System.Windows.Controls.Separator());
-            var transparencyMenu = new MenuItem { Header = "Transparência" };
+            var transparencyMenu = new MenuItem { Header = "Transparência", Icon = DockMenuIcon("\uE8A7") };
             transparencyMenu.Items.Add(OpacityItem("Mais transparente (45%)", 115, dockOpacity == 115));
             transparencyMenu.Items.Add(OpacityItem("Translúcido (65%)", 168, dockOpacity == 168));
             transparencyMenu.Items.Add(OpacityItem("Mais sólido (85%)", 217, dockOpacity == 217));
@@ -576,7 +580,6 @@ namespace DockBar
                 SaveSettings();
             };
             menu.Items.Add(keepWindowsOffItem);
-            menu.Items.Add(new System.Windows.Controls.Separator());
             var taskbarItem = new MenuItem { Header = "Ocultar barra de tarefas original", IsCheckable = true, IsChecked = taskbarHidden };
             taskbarItem.Click += delegate
             {
@@ -589,6 +592,7 @@ namespace DockBar
                 SaveSettings();
             };
             menu.Items.Add(taskbarItem);
+            menu.Items.Add(new System.Windows.Controls.Separator());
             var assistantMenuItem = new MenuItem { Header = "Exibir assistente", IsCheckable = true, IsChecked = showAssistant };
             assistantMenuItem.Click += delegate
             {
@@ -608,7 +612,13 @@ namespace DockBar
             };
             menu.Items.Add(mascotMenuItem);
             menu.Items.Add(new System.Windows.Controls.Separator());
-            var closeItem = new MenuItem { Header = "Fechar B.M Flow" };
+            var closeItem = new MenuItem
+            {
+                Header = "Fechar B.M Flow",
+                Icon = DockMenuIcon("\uE8BB"),
+                Background = new SolidColorBrush(Color.FromArgb(175, 53, 55, 63)),
+                FontWeight = FontWeights.SemiBold
+            };
             closeItem.Click += delegate { Close(); };
             menu.Items.Add(closeItem);
             root.ContextMenu = menu;
@@ -870,6 +880,20 @@ namespace DockBar
             }
             catch { return null; }
             finally { if (stream != null) stream.Dispose(); }
+        }
+
+        private static TextBlock DockMenuIcon(string glyph)
+        {
+            return new TextBlock
+            {
+                Text = glyph,
+                FontFamily = new FontFamily("Segoe MDL2 Assets"),
+                FontSize = 17,
+                Foreground = new SolidColorBrush(Color.FromRgb(202, 216, 240)),
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+                TextAlignment = TextAlignment.Center
+            };
         }
 
         private MenuItem OpacityItem(string label, byte alpha, bool selected = false)
@@ -1536,8 +1560,33 @@ namespace DockBar
             {
                 settingsWindow = null;
                 ScheduleAutoHide();
+                ScheduleMemoryTrim();
             };
             settingsWindow.Show();
+        }
+
+        internal void ScheduleMemoryTrim(int delayMilliseconds = 900)
+        {
+            var previous = Interlocked.Exchange(ref memoryTrimTimer, null);
+            if (previous != null) previous.Dispose();
+            memoryTrimTimer = new System.Threading.Timer(delegate
+            {
+                try
+                {
+                    if (isClosing) return;
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true);
+                    GC.WaitForPendingFinalizers();
+                    GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, true);
+                    using (Process process = Process.GetCurrentProcess())
+                        EmptyWorkingSet(process.Handle);
+                }
+                catch { }
+                finally
+                {
+                    var completed = Interlocked.Exchange(ref memoryTrimTimer, null);
+                    if (completed != null) completed.Dispose();
+                }
+            }, null, Math.Max(250, delayMilliseconds), Timeout.Infinite);
         }
 
         private void PositionSettingsWindowAboveDock(Window window)
@@ -1575,20 +1624,20 @@ namespace DockBar
         {
             if (menu == null) return;
             bool isDark = darkMode;
-            Color menuBgColor = isDark ? Color.FromArgb(120, 26, 26, 30) : Color.FromArgb(145, 245, 245, 248);
-            Color menuBorderColor = isDark ? Color.FromArgb(48, 255, 255, 255) : Color.FromArgb(40, 0, 0, 0);
-            Brush textBrush = isDark ? Brushes.White : new SolidColorBrush(Color.FromRgb(24, 24, 26));
-            Brush secondaryTextBrush = isDark ? new SolidColorBrush(Color.FromArgb(170, 255, 255, 255)) : new SolidColorBrush(Color.FromArgb(160, 0, 0, 0));
-            Brush hoverBrush = isDark ? new SolidColorBrush(Color.FromArgb(38, 255, 255, 255)) : new SolidColorBrush(Color.FromArgb(20, 0, 0, 0));
-            Brush separatorBrush = isDark ? new SolidColorBrush(Color.FromArgb(32, 255, 255, 255)) : new SolidColorBrush(Color.FromArgb(24, 0, 0, 0));
+            Color menuBgColor = isDark ? Color.FromArgb(238, 35, 36, 41) : Color.FromArgb(238, 245, 248, 253);
+            Color menuBorderColor = isDark ? Color.FromArgb(145, 91, 94, 104) : Color.FromArgb(70, 50, 78, 118);
+            Brush textBrush = isDark ? new SolidColorBrush(Color.FromRgb(230, 236, 248)) : new SolidColorBrush(Color.FromRgb(24, 35, 52));
+            Brush secondaryTextBrush = isDark ? new SolidColorBrush(Color.FromRgb(125, 137, 160)) : new SolidColorBrush(Color.FromRgb(112, 121, 137));
+            Brush hoverBrush = isDark ? new SolidColorBrush(Color.FromArgb(210, 25, 58, 104)) : new SolidColorBrush(Color.FromArgb(48, 64, 139, 230));
+            Brush separatorBrush = isDark ? new SolidColorBrush(Color.FromArgb(105, 112, 132, 165)) : new SolidColorBrush(Color.FromArgb(65, 76, 97, 126));
 
             menu.Background = new SolidColorBrush(menuBgColor);
             menu.Foreground = textBrush;
             menu.BorderBrush = new SolidColorBrush(menuBorderColor);
             menu.BorderThickness = new Thickness(1);
-            menu.Padding = new Thickness(4);
+            menu.Padding = new Thickness(8);
             menu.FontFamily = new FontFamily("Segoe UI");
-            menu.FontSize = 13;
+            menu.FontSize = 13.5;
             menu.SnapsToDevicePixels = true;
             menu.HasDropShadow = true;
 
@@ -1597,14 +1646,14 @@ namespace DockBar
             border.SetBinding(Border.BorderBrushProperty, new System.Windows.Data.Binding("BorderBrush") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
             border.SetBinding(Border.BorderThicknessProperty, new System.Windows.Data.Binding("BorderThickness") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
             border.SetBinding(Border.PaddingProperty, new System.Windows.Data.Binding("Padding") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
-            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
+            border.SetValue(Border.CornerRadiusProperty, new CornerRadius(16));
             border.SetValue(Border.SnapsToDevicePixelsProperty, true);
             border.SetValue(UIElement.EffectProperty, new DropShadowEffect
             {
-                BlurRadius = 22,
-                ShadowDepth = 5,
+                BlurRadius = 28,
+                ShadowDepth = 7,
                 Direction = 270,
-                Opacity = 0.45,
+                Opacity = 0.58,
                 Color = Color.FromRgb(0, 0, 0)
             });
             border.AppendChild(new FrameworkElementFactory(typeof(ItemsPresenter)));
@@ -1613,48 +1662,70 @@ namespace DockBar
             var itemStyle = new Style(typeof(MenuItem));
             itemStyle.Setters.Add(new Setter(Control.ForegroundProperty, textBrush));
             itemStyle.Setters.Add(new Setter(Control.BackgroundProperty, Brushes.Transparent));
-            itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(8, 5, 8, 5)));
-            itemStyle.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 28.0));
-            itemStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(1)));
+            itemStyle.Setters.Add(new Setter(Control.PaddingProperty, new Thickness(10, 6, 10, 6)));
+            itemStyle.Setters.Add(new Setter(FrameworkElement.MinHeightProperty, 38.0));
+            itemStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(1, 1.5, 1, 1.5)));
             itemStyle.Setters.Add(new Setter(Control.HorizontalContentAlignmentProperty, HorizontalAlignment.Stretch));
             itemStyle.Setters.Add(new EventSetter(MenuItem.SubmenuOpenedEvent, new RoutedEventHandler(OnFluentSubmenuOpened)));
 
             var itemRoot = new FrameworkElementFactory(typeof(Border));
             itemRoot.Name = "ItemBorder";
-            itemRoot.SetValue(Border.CornerRadiusProperty, new CornerRadius(6));
+            itemRoot.SetValue(Border.CornerRadiusProperty, new CornerRadius(9));
             itemRoot.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 1, 2, 1));
-            itemRoot.SetValue(Border.PaddingProperty, new Thickness(6, 4, 6, 4));
+            itemRoot.SetValue(Border.PaddingProperty, new Thickness(8, 5, 8, 5));
             itemRoot.SetBinding(Border.BackgroundProperty, new System.Windows.Data.Binding("Background") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
 
             var itemPanel = new FrameworkElementFactory(typeof(DockPanel));
             itemPanel.SetValue(DockPanel.LastChildFillProperty, true);
 
+            var leadingSlot = new FrameworkElementFactory(typeof(Grid));
+            leadingSlot.SetValue(FrameworkElement.WidthProperty, 30.0);
+            leadingSlot.SetValue(FrameworkElement.HeightProperty, 22.0);
+            leadingSlot.SetValue(FrameworkElement.MarginProperty, new Thickness(0, 0, 8, 0));
+            leadingSlot.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            leadingSlot.SetValue(DockPanel.DockProperty, Dock.Left);
+
             var iconPresenter = new FrameworkElementFactory(typeof(ContentPresenter));
             iconPresenter.Name = "IconPresenter";
             iconPresenter.SetValue(ContentPresenter.ContentSourceProperty, "Icon");
-            iconPresenter.SetValue(FrameworkElement.WidthProperty, 18.0);
-            iconPresenter.SetValue(FrameworkElement.HeightProperty, 18.0);
-            iconPresenter.SetValue(FrameworkElement.MarginProperty, new Thickness(2, 0, 8, 0));
+            iconPresenter.SetValue(FrameworkElement.WidthProperty, 20.0);
+            iconPresenter.SetValue(FrameworkElement.HeightProperty, 20.0);
+            iconPresenter.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             iconPresenter.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-            iconPresenter.SetValue(DockPanel.DockProperty, Dock.Left);
-            itemPanel.AppendChild(iconPresenter);
+            leadingSlot.AppendChild(iconPresenter);
+
+            var checkBox = new FrameworkElementFactory(typeof(Border));
+            checkBox.Name = "CheckBoxVisual";
+            checkBox.SetValue(FrameworkElement.WidthProperty, 18.0);
+            checkBox.SetValue(FrameworkElement.HeightProperty, 18.0);
+            checkBox.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
+            checkBox.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
+            checkBox.SetValue(Border.CornerRadiusProperty, new CornerRadius(4));
+            checkBox.SetValue(Border.BackgroundProperty, new SolidColorBrush(Color.FromArgb(90, 72, 84, 108)));
+            checkBox.SetValue(Border.BorderBrushProperty, new SolidColorBrush(Color.FromArgb(120, 132, 149, 180)));
+            checkBox.SetValue(Border.BorderThicknessProperty, new Thickness(1));
+            checkBox.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
 
             var check = new FrameworkElementFactory(typeof(TextBlock));
             check.Name = "CheckMark";
             check.SetValue(TextBlock.TextProperty, "✓");
             check.SetValue(TextBlock.FontSizeProperty, 12.0);
-            check.SetValue(FrameworkElement.WidthProperty, 18.0);
+            check.SetValue(TextBlock.FontWeightProperty, FontWeights.SemiBold);
+            check.SetValue(TextBlock.ForegroundProperty, Brushes.White);
             check.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
+            check.SetValue(FrameworkElement.HorizontalAlignmentProperty, HorizontalAlignment.Center);
             check.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
-            check.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Center);
-            check.SetValue(DockPanel.DockProperty, Dock.Left);
-            itemPanel.AppendChild(check);
+            checkBox.AppendChild(check);
+            leadingSlot.AppendChild(checkBox);
+            itemPanel.AppendChild(leadingSlot);
 
             var arrow = new FrameworkElementFactory(typeof(TextBlock));
             arrow.Name = "SubmenuArrow";
-            arrow.SetValue(TextBlock.TextProperty, "›");
-            arrow.SetValue(TextBlock.FontSizeProperty, 18.0);
-            arrow.SetValue(FrameworkElement.WidthProperty, 16.0);
+            arrow.SetValue(TextBlock.TextProperty, "\uE76C");
+            arrow.SetValue(TextBlock.FontFamilyProperty, new FontFamily("Segoe MDL2 Assets"));
+            arrow.SetValue(TextBlock.FontSizeProperty, 10.0);
+            arrow.SetValue(TextBlock.ForegroundProperty, new SolidColorBrush(Color.FromRgb(215, 226, 244)));
+            arrow.SetValue(FrameworkElement.WidthProperty, 18.0);
             arrow.SetValue(UIElement.VisibilityProperty, Visibility.Collapsed);
             arrow.SetValue(FrameworkElement.VerticalAlignmentProperty, VerticalAlignment.Center);
             arrow.SetValue(TextBlock.TextAlignmentProperty, TextAlignment.Right);
@@ -1672,8 +1743,8 @@ namespace DockBar
             popup.SetValue(Popup.AllowsTransparencyProperty, true);
             popup.SetValue(Popup.PopupAnimationProperty, PopupAnimation.Fade);
             popup.SetValue(Popup.PlacementProperty, PlacementMode.Right);
-            popup.SetValue(Popup.HorizontalOffsetProperty, -2.0);
-            popup.SetValue(Popup.VerticalOffsetProperty, -6.0);
+            popup.SetValue(Popup.HorizontalOffsetProperty, 5.0);
+            popup.SetValue(Popup.VerticalOffsetProperty, -8.0);
             popup.SetBinding(Popup.IsOpenProperty, new System.Windows.Data.Binding("IsSubmenuOpen") { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent, Mode = System.Windows.Data.BindingMode.TwoWay });
             popup.SetBinding(Popup.PlacementTargetProperty, new System.Windows.Data.Binding { RelativeSource = System.Windows.Data.RelativeSource.TemplatedParent });
 
@@ -1681,15 +1752,15 @@ namespace DockBar
             submenuBorder.SetValue(Border.BackgroundProperty, new SolidColorBrush(menuBgColor));
             submenuBorder.SetValue(Border.BorderBrushProperty, new SolidColorBrush(menuBorderColor));
             submenuBorder.SetValue(Border.BorderThicknessProperty, new Thickness(1));
-            submenuBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(10));
-            submenuBorder.SetValue(Border.PaddingProperty, new Thickness(4));
-            submenuBorder.SetValue(FrameworkElement.MinWidthProperty, 195.0);
+            submenuBorder.SetValue(Border.CornerRadiusProperty, new CornerRadius(14));
+            submenuBorder.SetValue(Border.PaddingProperty, new Thickness(8));
+            submenuBorder.SetValue(FrameworkElement.MinWidthProperty, 225.0);
             submenuBorder.SetValue(UIElement.EffectProperty, new DropShadowEffect
             {
-                BlurRadius = 22,
-                ShadowDepth = 5,
+                BlurRadius = 28,
+                ShadowDepth = 7,
                 Direction = 270,
-                Opacity = 0.45,
+                Opacity = 0.58,
                 Color = Color.FromRgb(0, 0, 0)
             });
             var submenuItems = new FrameworkElementFactory(typeof(StackPanel));
@@ -1706,8 +1777,15 @@ namespace DockBar
             highlighted.Setters.Add(new Setter(Border.BackgroundProperty, hoverBrush, "ItemBorder"));
             itemTemplate.Triggers.Add(highlighted);
 
+            var checkableTrigger = new Trigger { Property = MenuItem.IsCheckableProperty, Value = true };
+            checkableTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "CheckBoxVisual"));
+            checkableTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Collapsed, "IconPresenter"));
+            itemTemplate.Triggers.Add(checkableTrigger);
+
             var checkedTrigger = new Trigger { Property = MenuItem.IsCheckedProperty, Value = true };
             checkedTrigger.Setters.Add(new Setter(UIElement.VisibilityProperty, Visibility.Visible, "CheckMark"));
+            checkedTrigger.Setters.Add(new Setter(Border.BackgroundProperty, new SolidColorBrush(Color.FromRgb(42, 139, 255)), "CheckBoxVisual"));
+            checkedTrigger.Setters.Add(new Setter(Border.BorderBrushProperty, new SolidColorBrush(Color.FromRgb(80, 169, 255)), "CheckBoxVisual"));
             itemTemplate.Triggers.Add(checkedTrigger);
 
             var submenuTrigger = new Trigger { Property = MenuItem.HasItemsProperty, Value = true };
@@ -1732,7 +1810,7 @@ namespace DockBar
             var separatorTemplate = new ControlTemplate(typeof(System.Windows.Controls.Separator)) { VisualTree = separatorLine };
             var separatorStyle = new Style(typeof(System.Windows.Controls.Separator));
             separatorStyle.Setters.Add(new Setter(Control.TemplateProperty, separatorTemplate));
-            separatorStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(6, 4, 6, 4)));
+            separatorStyle.Setters.Add(new Setter(FrameworkElement.MarginProperty, new Thickness(12, 6, 12, 6)));
             menu.Resources[typeof(System.Windows.Controls.Separator)] = separatorStyle;
             menu.Resources[SystemColors.HighlightBrushKey] = hoverBrush;
             menu.Resources[SystemColors.HighlightTextBrushKey] = textBrush;
@@ -1759,7 +1837,7 @@ namespace DockBar
                 int backdropType = 3; // DWMSBT_TRANSIENTWINDOW (Acrylic)
                 DwmSetWindowAttribute(handle, 38, ref backdropType, Marshal.SizeOf(typeof(int)));
 
-                int tint = isDark ? unchecked((int)0x551E1C1C) : unchecked((int)0x65F0F0F0);
+                int tint = isDark ? unchecked((int)0xD02B2927) : unchecked((int)0xD8F8F5F0);
                 ApplyAcrylicToHandle(handle, tint);
 
                 return true;
@@ -3924,7 +4002,7 @@ namespace DockBar
             RefreshTaskItems();
             if (DateTime.UtcNow >= nextSystemInfoRefreshUtc)
             {
-                nextSystemInfoRefreshUtc = DateTime.UtcNow.AddSeconds(2);
+                nextSystemInfoRefreshUtc = DateTime.UtcNow.AddSeconds(5);
                 RefreshSystemInfoAsync();
             }
         }
@@ -4310,7 +4388,7 @@ namespace DockBar
         {
             DateTime now = DateTime.UtcNow;
             if (now < nextTaskRefreshUtc) return;
-            nextTaskRefreshUtc = now.AddMilliseconds(dockAutoHidden ? 3000 : 1000);
+            nextTaskRefreshUtc = now.AddMilliseconds(dockAutoHidden ? 8000 : 2500);
             if (Interlocked.CompareExchange(ref taskRefreshRunning, 1, 0) != 0) return;
             ThreadPool.QueueUserWorkItem(delegate
             {
@@ -4384,7 +4462,6 @@ namespace DockBar
         private List<TaskApp> ReadTaskApps()
         {
             var apps = new List<TaskApp>();
-            var taskbarButtons = ReadTaskbarApplicationButtonNames();
 
             DockWorkspace activeWs = (workspaceManager != null && workspaceManager.WorkspacesEnabled)
                 ? workspaceManager.ActiveWorkspace
@@ -4493,6 +4570,7 @@ namespace DockBar
                 }
             }
 
+            List<TaskApp> runningPackagedApps = null;
             foreach (IntPtr window in EnumerateTaskbarWindows())
             {
                 Process process = null;
@@ -4503,55 +4581,29 @@ namespace DockBar
                     if (processId == 0 || processId == currentProcessId) continue;
                     process = Process.GetProcessById((int)processId);
                     string windowTitle = GetWindowTitle(window);
-                    string path = process.MainModule == null ? String.Empty : process.MainModule.FileName;
                     string processName = process.ProcessName;
+                    string path = String.Empty;
+                    try { path = process.MainModule == null ? String.Empty : process.MainModule.FileName; }
+                    catch { }
                     string windowAppId = GetWindowAppUserModelId(window);
+                    string windowClass = GetWindowClassName(window);
+                    bool isWindowsTerminal = String.Equals(processName, "WindowsTerminal", StringComparison.OrdinalIgnoreCase) ||
+                                             (String.Equals(processName, "OpenConsole", StringComparison.OrdinalIgnoreCase) &&
+                                              (windowClass.IndexOf("CASCADIA", StringComparison.OrdinalIgnoreCase) >= 0 || IsWindowsTerminalIdentity(path))) ||
+                                             windowClass.IndexOf("CASCADIA", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                                             IsWindowsTerminalIdentity(windowAppId);
+                    if (isWindowsTerminal)
+                    {
+                        path = ResolveWindowsTerminalTarget(path);
+                        if (String.IsNullOrWhiteSpace(windowAppId)) windowAppId = WindowsTerminalAppId;
+                    }
                     bool isExplorerWindow = String.Equals(processName, "explorer", StringComparison.OrdinalIgnoreCase) ||
                                             SameTarget(path, System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "explorer.exe"));
-
-                    var match = apps.FirstOrDefault(a =>
-                    {
-                        if (isExplorerWindow)
-                        {
-                            return String.Equals(a.Name, "Explorador de Arquivos", StringComparison.OrdinalIgnoreCase) ||
-                                   String.Equals(a.Name, "File Explorer", StringComparison.OrdinalIgnoreCase) ||
-                                   (SameTarget(a.Target, path) && String.IsNullOrWhiteSpace(a.Arguments) && String.IsNullOrWhiteSpace(a.AppUserModelId));
-                        }
-
-                        if (String.Equals(processName, "steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
-                            String.Equals(processName, "steam", StringComparison.OrdinalIgnoreCase))
-                        {
-                            if (String.Equals(a.Name, "Steam", StringComparison.OrdinalIgnoreCase) ||
-                                String.Equals(System.IO.Path.GetFileNameWithoutExtension(a.Target), "steam", StringComparison.OrdinalIgnoreCase) ||
-                                (!String.IsNullOrWhiteSpace(a.Target) && a.Target.IndexOf("Steam", StringComparison.OrdinalIgnoreCase) >= 0))
-                            {
-                                return true;
-                            }
-                        }
-
-                        if (!String.IsNullOrWhiteSpace(windowAppId))
-                        {
-                            if (String.Equals(a.AppUserModelId, windowAppId, StringComparison.OrdinalIgnoreCase) ||
-                                String.Equals(a.Identity, windowAppId, StringComparison.OrdinalIgnoreCase))
-                                return true;
-                        }
-
-                        bool usesExplorerLauncher = !String.IsNullOrWhiteSpace(a.Arguments) &&
-                                                    a.Arguments.IndexOf("shell:AppsFolder", StringComparison.OrdinalIgnoreCase) >= 0;
-
-                        if (!usesExplorerLauncher && SameTarget(a.Target, path)) return true;
-
-                        if (!usesExplorerLauncher && String.Equals(System.IO.Path.GetFileNameWithoutExtension(a.Target), processName, StringComparison.OrdinalIgnoreCase)) return true;
-
-                        if (!String.IsNullOrWhiteSpace(a.Identity) &&
-                            (processName.IndexOf(a.Identity, StringComparison.OrdinalIgnoreCase) >= 0 ||
-                             a.Identity.IndexOf(processName, StringComparison.OrdinalIgnoreCase) >= 0))
-                            return true;
-
-                        if (!String.IsNullOrWhiteSpace(a.Name) && String.Equals(a.Name, processName, StringComparison.OrdinalIgnoreCase)) return true;
-
-                        return false;
-                    });
+                    bool isSteamWindow = String.Equals(processName, "steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
+                                         String.Equals(processName, "steam", StringComparison.OrdinalIgnoreCase);
+                    string runningIdentity = BuildRunningIdentity(windowAppId, processName, processId);
+                    var match = apps.FirstOrDefault(a => RunningWindowMatchesApp(a, isWindowsTerminal, isExplorerWindow,
+                        isSteamWindow, windowAppId, runningIdentity, path, processName));
                     if (match != null)
                     {
                         if (!match.WindowHandles.Contains(window))
@@ -4562,44 +4614,62 @@ namespace DockBar
                         if (match.WindowHandle == IntPtr.Zero) match.WindowHandle = window;
                         if (String.IsNullOrWhiteSpace(match.AppUserModelId)) match.AppUserModelId = windowAppId;
                     }
-                    else if (!String.IsNullOrWhiteSpace(path))
+                    else
                     {
-                        bool alreadyInApps;
-                        if (isExplorerWindow)
-                        {
-                            alreadyInApps = apps.Any(a => String.Equals(a.Name, "Explorador de Arquivos", StringComparison.OrdinalIgnoreCase) ||
-                                                          String.Equals(a.Name, "File Explorer", StringComparison.OrdinalIgnoreCase) ||
-                                                          (SameTarget(a.Target, path) && String.IsNullOrWhiteSpace(a.Arguments)));
-                        }
-                        else if (String.Equals(processName, "steamwebhelper", StringComparison.OrdinalIgnoreCase) ||
-                                 String.Equals(processName, "steam", StringComparison.OrdinalIgnoreCase))
-                        {
-                            alreadyInApps = apps.Any(a => String.Equals(a.Name, "Steam", StringComparison.OrdinalIgnoreCase) ||
-                                                          String.Equals(System.IO.Path.GetFileNameWithoutExtension(a.Target), "steam", StringComparison.OrdinalIgnoreCase) ||
-                                                          (!String.IsNullOrWhiteSpace(a.Target) && a.Target.IndexOf("Steam", StringComparison.OrdinalIgnoreCase) >= 0));
-                        }
-                        else
-                        {
-                            alreadyInApps = apps.Any(a => SameTarget(a.Target, path) && (String.IsNullOrWhiteSpace(a.Arguments) || a.Arguments.IndexOf("shell:AppsFolder", StringComparison.OrdinalIgnoreCase) < 0));
-                        }
+                        bool alreadyInApps = apps.Any(a => RunningWindowMatchesApp(a, isWindowsTerminal, isExplorerWindow,
+                            isSteamWindow, windowAppId, runningIdentity, path, processName));
 
                         if (!alreadyInApps)
                         {
                             if (activeWs != null && activeWs.IsolateWorkspace) continue;
+                            TaskApp packagedApp = null;
+                            if (!String.IsNullOrWhiteSpace(windowAppId))
+                            {
+                                if (runningPackagedApps == null) runningPackagedApps = ReadPackagedApps();
+                                packagedApp = runningPackagedApps.FirstOrDefault(item =>
+                                    String.Equals(item.AppUserModelId, windowAppId, StringComparison.OrdinalIgnoreCase) ||
+                                    String.Equals(item.Identity, windowAppId, StringComparison.OrdinalIgnoreCase));
+                            }
                             string description = String.Empty;
                             try { description = process.MainModule.FileVersionInfo.FileDescription; } catch { }
-                            bool namedTaskbarButton = WindowHasTaskbarButton(windowTitle, processName, description, taskbarButtons);
-                            if (taskbarButtons.Count > 0 && !namedTaskbarButton && String.IsNullOrWhiteSpace(windowAppId) && !IsExplicitTaskbarWindow(window)) continue;
-                            string displayName = String.IsNullOrWhiteSpace(description) ? processName : description;
-                            if (String.Equals(processName, "steamwebhelper", StringComparison.OrdinalIgnoreCase) || String.Equals(processName, "steam", StringComparison.OrdinalIgnoreCase))
+                            string displayName = isWindowsTerminal ? "Terminal"
+                                : packagedApp != null && !String.IsNullOrWhiteSpace(packagedApp.Name) ? packagedApp.Name
+                                : String.IsNullOrWhiteSpace(description) ? processName : description;
+                            string launchArguments = String.Empty;
+                            string resolvedIdentity = !String.IsNullOrWhiteSpace(runningIdentity) ? runningIdentity : windowAppId;
+                            if (isWindowsTerminal)
+                            {
+                                windowAppId = WindowsTerminalAppId;
+                                resolvedIdentity = WindowsTerminalAppId;
+                            }
+                            else if (isSteamWindow)
                             {
                                 displayName = "Steam";
                                 string steamExe = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), @"Steam\steam.exe");
                                 if (!File.Exists(steamExe)) steamExe = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), @"Steam\steam.exe");
                                 if (File.Exists(steamExe)) path = steamExe;
                             }
+                            else if (packagedApp != null)
+                            {
+                                if (String.IsNullOrWhiteSpace(path) || IsSharedRuntimeProcess(processName)) path = packagedApp.Target;
+                                launchArguments = packagedApp.Arguments;
+                                if (!String.IsNullOrWhiteSpace(packagedApp.Identity)) resolvedIdentity = packagedApp.Identity;
+                            }
                             else if (!String.IsNullOrWhiteSpace(windowTitle)) displayName = windowTitle;
-                            var runningApp = new TaskApp { Name = displayName, Target = path, AppUserModelId = windowAppId, WindowHandle = window, Icon = IconFor(path) };
+
+                            ImageSource runningIcon = !String.IsNullOrWhiteSpace(windowAppId)
+                                ? (IconForShellItem(windowAppId) ?? IconFor(path))
+                                : IconFor(path);
+                            var runningApp = new TaskApp
+                            {
+                                Name = displayName,
+                                Target = path,
+                                Arguments = launchArguments,
+                                AppUserModelId = windowAppId,
+                                Identity = resolvedIdentity,
+                                WindowHandle = window,
+                                Icon = runningIcon
+                            };
                             runningApp.WindowHandles.Add(window);
                             runningApp.WindowTitles.Add(windowTitle);
                             apps.Add(runningApp);
@@ -4676,55 +4746,6 @@ namespace DockBar
                 .ToList();
             apps.Clear();
             apps.AddRange(ordered);
-        }
-
-        private static bool WindowHasTaskbarButton(string windowTitle, string processName, string description, List<string> buttons)
-        {
-            foreach (string button in buttons)
-            {
-                if (!String.IsNullOrWhiteSpace(processName) && button.StartsWith(processName, StringComparison.OrdinalIgnoreCase)) return true;
-                if (!String.IsNullOrWhiteSpace(description) && button.StartsWith(description, StringComparison.OrdinalIgnoreCase)) return true;
-                int separator = button.IndexOf(" -", StringComparison.Ordinal);
-                string appName = separator > 0 ? button.Substring(0, separator) : button;
-                if (!String.IsNullOrWhiteSpace(windowTitle) &&
-                    (windowTitle.StartsWith(appName, StringComparison.OrdinalIgnoreCase) || windowTitle.EndsWith(appName, StringComparison.OrdinalIgnoreCase))) return true;
-            }
-            return false;
-        }
-
-        private static List<string> ReadTaskbarApplicationButtonNames()
-        {
-            if (cachedTaskbarButtonNames.Count > 0 && DateTime.UtcNow < taskbarButtonNamesCacheExpiresUtc)
-                return new List<string>(cachedTaskbarButtonNames);
-            var names = new List<string>();
-            try
-            {
-                IntPtr taskbar = FindWindow("Shell_TrayWnd", null);
-                if (taskbar == IntPtr.Zero) return names;
-                IntPtr provider = FindWindowEx(taskbar, IntPtr.Zero, "Windows.UI.Composition.DesktopWindowContentBridge", null);
-                if (provider == IntPtr.Zero) provider = FindWindowEx(taskbar, IntPtr.Zero, "Windows.UI.Input.InputSite.WindowClass", null);
-                AutomationElement root = AutomationElement.FromHandle(provider == IntPtr.Zero ? taskbar : provider);
-                var condition = new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button);
-                AutomationElementCollection buttons = root.FindAll(TreeScope.Descendants, condition);
-                foreach (AutomationElement button in buttons)
-                {
-                    string name = button.Current.Name;
-                    if (String.IsNullOrWhiteSpace(name)) continue;
-                    if (name.IndexOf("fixado", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        name.IndexOf("pinned", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        name.IndexOf("janela em execução", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        name.IndexOf("executando", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                        name.IndexOf("running", StringComparison.OrdinalIgnoreCase) >= 0) names.Add(name);
-                }
-            }
-            catch { }
-            if (names.Count > 0)
-            {
-                cachedTaskbarButtonNames.Clear();
-                cachedTaskbarButtonNames.AddRange(names);
-                taskbarButtonNamesCacheExpiresUtc = DateTime.UtcNow.AddSeconds(2);
-            }
-            return names;
         }
 
         private static List<string> ReadPinnedButtonNames()
@@ -4932,7 +4953,10 @@ namespace DockBar
             var windows = new List<IntPtr>();
             EnumWindows(delegate(IntPtr window, IntPtr parameter)
             {
-                if (IsTaskbarWindow(window) && (!String.IsNullOrWhiteSpace(GetWindowTitle(window)) || IsExplicitTaskbarWindow(window))) windows.Add(window);
+                bool isCascadiaWindow = GetWindowClassName(window).IndexOf("CASCADIA", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (IsTaskbarWindow(window) &&
+                    (!String.IsNullOrWhiteSpace(GetWindowTitle(window)) || IsExplicitTaskbarWindow(window) || isCascadiaWindow))
+                    windows.Add(window);
                 return true;
             }, IntPtr.Zero);
             return windows;
@@ -4951,6 +4975,9 @@ namespace DockBar
         {
             if (window == IntPtr.Zero || !IsWindowVisible(window)) return false;
 
+            string windowClass = GetWindowClassName(window);
+            bool isCascadiaWindow = windowClass.IndexOf("CASCADIA", StringComparison.OrdinalIgnoreCase) >= 0;
+
             int cloaked = 0;
             int size = Marshal.SizeOf(typeof(int));
             if (DwmGetWindowAttribute(window, 14, out cloaked, size) == 0 && cloaked != 0) return false;
@@ -4959,15 +4986,13 @@ namespace DockBar
             const long ToolWindow = 0x00000080L;
             const long AppWindow = 0x00040000L;
             bool explicitlyOnTaskbar = (extendedStyle & AppWindow) != 0;
-            if ((extendedStyle & ToolWindow) != 0 && !explicitlyOnTaskbar) return false;
-            if (GetWindow(window, 4) != IntPtr.Zero && !explicitlyOnTaskbar) return false;
+            if ((extendedStyle & ToolWindow) != 0 && !explicitlyOnTaskbar && !isCascadiaWindow) return false;
+            if (GetWindow(window, 4) != IntPtr.Zero && !explicitlyOnTaskbar && !isCascadiaWindow) return false;
 
             // Janelas filhas de outras janelas não aparecem na barra
-            if (GetAncestor(window, 2) != window && !explicitlyOnTaskbar) return false;
+            if (GetAncestor(window, 2) != window && !explicitlyOnTaskbar && !isCascadiaWindow) return false;
 
-            var className = new StringBuilder(128);
-            GetClassName(window, className, className.Capacity);
-            string cls = className.ToString();
+            string cls = windowClass;
             if (cls == "Progman" || cls == "WorkerW" || cls == "Shell_TrayWnd" ||
                 cls == "Shell_SecondaryTrayWnd" || cls == "DesktopBackgroundClass" ||
                 cls == "DummyDwmWallpaperWindow" || cls == "FolderViewHost")
@@ -4995,6 +5020,135 @@ namespace DockBar
             }
 
             return true;
+        }
+
+        private static string GetWindowClassName(IntPtr window)
+        {
+            if (window == IntPtr.Zero) return String.Empty;
+            var className = new StringBuilder(160);
+            return GetClassName(window, className, className.Capacity) > 0 ? className.ToString() : String.Empty;
+        }
+
+        private static bool IsWindowsTerminalIdentity(string value)
+        {
+            if (String.IsNullOrWhiteSpace(value)) return false;
+            return value.IndexOf("WindowsTerminal", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   String.Equals(System.IO.Path.GetFileNameWithoutExtension(value), "wt", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool IsWindowsTerminalApp(TaskApp app)
+        {
+            if (app == null) return false;
+            return IsWindowsTerminalIdentity(app.AppUserModelId) ||
+                   IsWindowsTerminalIdentity(app.Identity) ||
+                   IsWindowsTerminalIdentity(app.Target) ||
+                   (!String.IsNullOrWhiteSpace(app.Name) && app.Name.IndexOf("Terminal", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        private static bool IsSharedRuntimeProcess(string processName)
+        {
+            if (String.IsNullOrWhiteSpace(processName)) return false;
+            switch (processName.ToLowerInvariant())
+            {
+                case "applicationframehost":
+                case "runtimebroker":
+                case "dllhost":
+                case "rundll32":
+                case "java":
+                case "javaw":
+                case "python":
+                case "pythonw":
+                case "node":
+                case "electron":
+                case "openconsole":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private static bool IsBrowserPwaIdentity(string appUserModelId)
+        {
+            if (String.IsNullOrWhiteSpace(appUserModelId)) return false;
+            string value = appUserModelId.ToLowerInvariant();
+            return value.Contains("_crx_") || value.Contains(".pwa.") || value.StartsWith("pwa:", StringComparison.Ordinal);
+        }
+
+        private static string BuildRunningIdentity(string appUserModelId, string processName, uint processId)
+        {
+            if (!String.IsNullOrWhiteSpace(appUserModelId)) return "aumid:" + appUserModelId.ToLowerInvariant();
+            return "process:" + (processName ?? "application").ToLowerInvariant() + ":" + processId.ToString(CultureInfo.InvariantCulture);
+        }
+
+        private static bool RunningWindowMatchesApp(TaskApp app, bool isWindowsTerminal, bool isExplorerWindow,
+            bool isSteamWindow, string windowAppId, string runningIdentity, string path, string processName)
+        {
+            if (app == null) return false;
+            if (isWindowsTerminal) return IsWindowsTerminalApp(app);
+            if (isExplorerWindow)
+            {
+                return String.Equals(app.Name, "Explorador de Arquivos", StringComparison.OrdinalIgnoreCase) ||
+                       String.Equals(app.Name, "File Explorer", StringComparison.OrdinalIgnoreCase) ||
+                       (SameTarget(app.Target, path) && String.IsNullOrWhiteSpace(app.Arguments) && String.IsNullOrWhiteSpace(app.AppUserModelId));
+            }
+            if (isSteamWindow)
+            {
+                return String.Equals(app.Name, "Steam", StringComparison.OrdinalIgnoreCase) ||
+                       String.Equals(System.IO.Path.GetFileNameWithoutExtension(app.Target), "steam", StringComparison.OrdinalIgnoreCase) ||
+                       (!String.IsNullOrWhiteSpace(app.Target) && app.Target.IndexOf("Steam", StringComparison.OrdinalIgnoreCase) >= 0);
+            }
+
+            if (!String.IsNullOrWhiteSpace(windowAppId))
+            {
+                if (String.Equals(app.AppUserModelId, windowAppId, StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(app.Identity, windowAppId, StringComparison.OrdinalIgnoreCase) ||
+                    String.Equals(app.Identity, runningIdentity, StringComparison.OrdinalIgnoreCase))
+                    return true;
+
+                // PWAs possuem o mesmo executável do navegador, mas são itens
+                // independentes na barra do Windows.
+                if (IsBrowserPwaIdentity(windowAppId)) return false;
+            }
+
+            if (!String.IsNullOrWhiteSpace(runningIdentity) &&
+                String.Equals(app.Identity, runningIdentity, StringComparison.OrdinalIgnoreCase)) return true;
+
+            bool usesExplorerLauncher = !String.IsNullOrWhiteSpace(app.Arguments) &&
+                                        app.Arguments.IndexOf("shell:AppsFolder", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool sharedRuntime = IsSharedRuntimeProcess(processName);
+            if (!sharedRuntime && !usesExplorerLauncher && !String.IsNullOrWhiteSpace(path) && SameTarget(app.Target, path)) return true;
+            if (!sharedRuntime && !usesExplorerLauncher &&
+                String.Equals(System.IO.Path.GetFileNameWithoutExtension(app.Target), processName, StringComparison.OrdinalIgnoreCase)) return true;
+
+            bool structuredIdentity = !String.IsNullOrWhiteSpace(app.Identity) &&
+                                      (app.Identity.StartsWith("process:", StringComparison.OrdinalIgnoreCase) ||
+                                       app.Identity.StartsWith("host:", StringComparison.OrdinalIgnoreCase) ||
+                                       app.Identity.StartsWith("aumid:", StringComparison.OrdinalIgnoreCase));
+            if (!sharedRuntime && !structuredIdentity && !String.IsNullOrWhiteSpace(app.Identity) &&
+                (processName.IndexOf(app.Identity, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                 app.Identity.IndexOf(processName, StringComparison.OrdinalIgnoreCase) >= 0)) return true;
+
+            return !sharedRuntime && !String.IsNullOrWhiteSpace(app.Name) &&
+                   String.Equals(app.Name, processName, StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static string ResolveWindowsTerminalTarget(string currentPath)
+        {
+            try
+            {
+                if (!String.IsNullOrWhiteSpace(currentPath))
+                {
+                    string fileName = System.IO.Path.GetFileName(currentPath);
+                    if (String.Equals(fileName, "WindowsTerminal.exe", StringComparison.OrdinalIgnoreCase)) return currentPath;
+                    string sibling = System.IO.Path.Combine(System.IO.Path.GetDirectoryName(currentPath) ?? String.Empty, "WindowsTerminal.exe");
+                    if (File.Exists(sibling)) return sibling;
+                }
+                string alias = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "Microsoft", "WindowsApps", "wt.exe");
+                if (File.Exists(alias)) return alias;
+            }
+            catch { }
+            return currentPath ?? String.Empty;
         }
 
         private static bool IsExplicitTaskbarWindow(IntPtr window)
@@ -5068,15 +5222,39 @@ namespace DockBar
             }
         }
 
+        private static ImageSource GetCachedIcon(string key)
+        {
+            lock (iconCacheLock)
+            {
+                WeakReference reference;
+                if (!iconCache.TryGetValue(key, out reference)) return null;
+                var source = reference.Target as ImageSource;
+                if (source == null) iconCache.Remove(key);
+                return source;
+            }
+        }
+
+        private static void CacheIcon(string key, ImageSource source)
+        {
+            if (source == null) return;
+            lock (iconCacheLock)
+            {
+                iconCache[key] = new WeakReference(source);
+                if (iconCache.Count <= 128) return;
+                foreach (string deadKey in iconCache.Where(item => !item.Value.IsAlive).Select(item => item.Key).ToList())
+                    iconCache.Remove(deadKey);
+                if (iconCache.Count > 192)
+                    foreach (string oldKey in iconCache.Keys.Take(iconCache.Count - 160).ToList())
+                        iconCache.Remove(oldKey);
+            }
+        }
+
         private static ImageSource IconFor(string path)
         {
             if (String.IsNullOrWhiteSpace(path)) return null;
             string cacheKey = "file:" + path;
-            lock (iconCacheLock)
-            {
-                ImageSource cached;
-                if (iconCache.TryGetValue(cacheKey, out cached)) return cached;
-            }
+            ImageSource cached = GetCachedIcon(cacheKey);
+            if (cached != null) return cached;
             try
             {
                 using (Drawing.Icon icon = Drawing.Icon.ExtractAssociatedIcon(path))
@@ -5084,7 +5262,7 @@ namespace DockBar
                     if (icon == null) return null;
                     var source = Imaging.CreateBitmapSourceFromHIcon(icon.Handle, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(40, 40));
                     source.Freeze();
-                    lock (iconCacheLock) iconCache[cacheKey] = source;
+                    CacheIcon(cacheKey, source);
                     return source;
                 }
             }
@@ -5252,11 +5430,8 @@ namespace DockBar
         {
             if (String.IsNullOrWhiteSpace(path)) return null;
             string cacheKey = "shell:" + path;
-            lock (iconCacheLock)
-            {
-                ImageSource cached;
-                if (iconCache.TryGetValue(cacheKey, out cached)) return cached;
-            }
+            ImageSource cached = GetCachedIcon(cacheKey);
+            if (cached != null) return cached;
             IShellItemImageFactory factory = null;
             IntPtr bitmap = IntPtr.Zero;
             try
@@ -5267,7 +5442,7 @@ namespace DockBar
                 if (factory.GetImage(size, 0x105, out bitmap) != 0 || bitmap == IntPtr.Zero) return null;
                 var source = Imaging.CreateBitmapSourceFromHBitmap(bitmap, IntPtr.Zero, Int32Rect.Empty, BitmapSizeOptions.FromWidthAndHeight(40, 40));
                 source.Freeze();
-                lock (iconCacheLock) iconCache[cacheKey] = source;
+                CacheIcon(cacheKey, source);
                 return source;
             }
             catch { return null; }
@@ -7122,6 +7297,10 @@ namespace DockBar
                 try { UnregisterHotKey(dockHandle, 0x9200 + i); } catch { }
             }
         }
+
+        [DllImport("psapi.dll")]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static extern bool EmptyWorkingSet(IntPtr process);
 
         [StructLayout(LayoutKind.Sequential)]
         private struct WindowCompositionAttributeData

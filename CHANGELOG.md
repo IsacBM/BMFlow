@@ -4,6 +4,34 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 
 ## [Não lançado]
 
+## [0.3.0] - 2026-11-06
+
+### Adicionado
+
+- Verificação manual de atualizações na página Sobre, consultando a release mais recente pela API oficial do GitHub sem downloads automáticos.
+- Resolvedor universal de aplicativos com prioridade para AppUserModelID, identidade de pacote, classe de janela e executável.
+- Suporte dedicado ao Windows Terminal e às janelas Cascadia, agrupando `WindowsTerminal.exe` e `OpenConsole.exe` sob um único ícone.
+- Pré-visualizações realistas dos temas da Dock com ícones reais, indicadores de execução, transparência, bordas e sombras.
+- Botão de minimizar e nova página Sobre com informações da instalação, links da comunidade e identidade visual do projeto.
+
+### Alterado
+
+- Tela de configurações redesenhada com navegação, cartões, seletores, sliders, switches e barra de rolagem próprios.
+- Cor de destaque migrada do coral para azul em toda a interface de configurações.
+- Menu principal e submenus da Dock modernizados com fundo cinza-grafite translúcido, checks azuis, ícones Fluent e agrupamentos mais claros.
+- Aplicativos da Microsoft Store, PWAs, programas elevados e processos compartilhados como Java e Python agora recebem identidades mais confiáveis.
+- Frequência dos monitores de sistema reduzida e atualização por eventos priorizada para diminuir alocações recorrentes.
+
+### Corrigido
+
+- Seletores das configurações não exibem mais texto branco sobre fundo branco.
+- Controles de escala agora respeitam o tema escuro e mantêm alinhamento e interação consistentes.
+- Aplicativos abertos e não fixados voltam a aparecer quando o espaço de trabalho não está isolado.
+- PWAs não são mais agrupadas incorretamente junto ao navegador principal.
+- Aplicações diferentes que usam `javaw.exe`, `pythonw.exe` ou outros processos compartilhados não colidem mais no mesmo item.
+- Ícones e indicadores das prévias de tema permanecem centralizados na mini Dock.
+- Páginas, imagens e caches das configurações são liberados ao fechar ou minimizar a janela, reduzindo o consumo observado de cerca de 205 MB para aproximadamente 59 MB em repouso.
+
 ## [0.2.0] - 2026-11-05
 
 ### Adicionado
@@ -50,6 +78,7 @@ Todas as mudanças relevantes serão registradas neste arquivo. O formato segue 
 - Temas, transparência, auto-ocultação e integração AppBar.
 - Espaços de trabalho, widget de relógio, mascotes e temas de cursor.
 
-[Não lançado]: https://github.com/IsacBM/BMFlow/compare/v0.2.0...HEAD
+[Não lançado]: https://github.com/IsacBM/BMFlow/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/IsacBM/BMFlow/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/IsacBM/BMFlow/compare/e5c2b5a...v0.2.0
 [0.1.0]: https://github.com/IsacBM/BMFlow/commit/e5c2b5a
