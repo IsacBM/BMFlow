@@ -18,6 +18,8 @@ O projeto está aberto para aprender, evoluir e construir junto com a comunidade
 - miniaturas ao vivo, paginação e navegação completa por teclado;
 - Jump Lists, itens recentes, pastas frequentes e ações rápidas;
 - relógio, bateria, rede, volume, lixeira e bandeja do sistema;
+- player compacto para a sessão de mídia atual, com capa e controles de reprodução;
+- barra superior opcional com janela ativa, espaços de trabalho e indicadores do sistema, ocultada automaticamente quando a Dock fica no topo;
 - ocultação automática, suporte a tela cheia e integração opcional como AppBar;
 - espaços de trabalho para abrir e restaurar conjuntos de aplicativos;
 - widget de relógio para a área de trabalho;
@@ -25,7 +27,7 @@ O projeto está aberto para aprender, evoluir e construir junto com a comunidade
 - temas opcionais de cursor, com backup e restauração do esquema anterior;
 - detecção de assistentes instalados e integração com aplicativos em segundo plano.
 
-Widgets de mídia e clima estão entre as ideias para versões futuras.
+Widgets de clima estão entre as ideias para versões futuras.
 
 ## Requisitos
 
@@ -101,6 +103,8 @@ Nenhum desses recursos exige privilégios de administrador. Leia também [Soluç
 │   ├── Workspaces/        # espaços de trabalho
 │   ├── Preview/           # miniaturas de janelas
 │   ├── Cursors/           # aplicação de temas de cursor
+│   ├── Media/             # sessões e controles globais de mídia
+│   ├── TopBar/            # barra superior e reserva da área de trabalho
 │   └── WindowsInterop/    # comandos e serviços nativos do Windows
 ├── BMFlow.csproj          # projeto para Visual Studio e .NET SDK
 ├── build.ps1              # compilação com o .NET Framework do sistema

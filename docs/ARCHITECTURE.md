@@ -13,6 +13,7 @@ App
      ├─ PreviewWindow
      ├─ WorkspaceManager
      ├─ DesktopWidgetWindow
+     ├─ TopBarWindow
      ├─ DockMascot
      ├─ DockSettingsWindow
      └─ serviços do Windows
@@ -23,16 +24,18 @@ App
 | Componente | Caminho | Responsabilidade |
 | --- | --- | --- |
 | `App` | `src/App.cs` | Ponto de entrada, instância única e captura de falhas não tratadas. |
-| `DockWindow` | `src/Dock/` | Janela principal, estado da dock, descoberta de apps, menus, bandeja e ciclo de vida. |
+| `DockWindow` | `src/Dock/` | Janela principal e orquestração da Dock, dividida em partes parciais por responsabilidade. |
 | `WindowCommands` | `src/WindowsInterop/` | Operações de ativar, restaurar, minimizar e fechar janelas. |
 | `PreviewWindow` | `src/Preview/` | Miniaturas DWM, agrupamento, paginação e navegação por teclado. |
 | `MacCursorService` | `src/Cursors/` | Instalação local dos arquivos, backup, aplicação e restauração do esquema de cursor. |
 | `WorkspaceManager` | `src/Workspaces/` | Persistência e seleção de espaços de trabalho. |
 | `WorkspaceHudWindow` | `src/Workspaces/` | Retorno visual ao alternar espaços de trabalho. |
 | `DesktopWidgetWindow` | `src/Widgets/` | Widget reposicionável de data e hora. |
+| `TopBarWindow` | `src/TopBar/` | Barra superior, janela ativa, espaços de trabalho, estado do sistema e reserva AppBar do topo. |
 | `DockMascot` | `src/Mascots/` | Animações, comportamentos e interação dos mascotes. |
 | `DockSettingsWindow` | `src/Settings/` | Interface das páginas de configuração. |
 | `AudioController` | `src/WindowsInterop/` | Consulta e alteração de volume por interfaces de áudio do Windows. |
+| `MediaSessionService` | `src/Media/` | Descoberta e controle da sessão global de mídia por projeção WinRT carregada em tempo de execução. |
 
 ## Persistência
 
@@ -66,7 +69,23 @@ Timers do WPF atualizam a interface e coordenam prévias, ocultação e detecç�
 ```text
 src/
 ├── App.cs
+├── Media/
+│   ├── MediaSessionService.cs    # integração WinRT e comandos de reprodução
+│   └── MediaSessionSnapshot.cs   # estado consumido pela interface
+├── TopBar/
+│   └── TopBarWindow.cs           # barra superior compacta e AppBar independente
 ├── Dock/
+│   ├── DockWindow.cs             # construção visual e ciclo de vida principal
+│   ├── DockMediaPlayer.cs        # cápsula do player e adaptação horizontal/vertical
+│   ├── DockTopBar.cs             # estado compartilhado e ciclo de vida da barra superior
+│   ├── DockApplications.cs       # descoberta, identidade e controle de aplicativos
+│   ├── DockConfiguration.cs      # persistência, configurações e menus
+│   ├── DockSystemMonitoring.cs   # relógio, contraste, volume, bateria e rede
+│   ├── DockNativeLifecycle.cs    # auto-ocultação, tela cheia, AppBar e barra de tarefas
+│   ├── DockShellPanels.cs        # Iniciar, Configurações Rápidas e bandeja do Windows
+│   ├── DockNativeInterop.cs      # contratos Win32, Shell e COM compartilhados
+│   ├── DockWorkspaces.cs         # troca, restauração e atalhos dos espaços de trabalho
+│   └── DockPlacement.cs          # orientação, borda e posicionamento
 ├── Settings/
 ├── Mascots/
 ├── Workspaces/
@@ -78,7 +97,7 @@ src/
 └── WindowsInterop/
 ```
 
-O `DockWindow` ainda concentra a orquestração principal. Novas extrações devem ser incrementais: primeiro isolar serviços sem estado visual e, depois, componentes de interface com limites claros. Cada etapa precisa manter funcionais os dois builds:
+O `DockWindow` ainda concentra a orquestração principal, mas suas partes parciais mantêm juntas apenas responsabilidades relacionadas. Novas extrações devem ser incrementais: primeiro isolar serviços sem estado visual e, depois, componentes de interface com limites claros. Cada etapa precisa manter funcionais os dois builds:
 
 ```text
 build.ps1          -> BMFlow.exe na raiz

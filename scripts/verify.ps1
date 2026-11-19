@@ -71,6 +71,8 @@ $requiredDirectories = @(
     'src\Workspaces',
     'src\Preview',
     'src\Cursors',
+    'src\Media',
+    'src\TopBar',
     'src\Widgets',
     'src\Models',
     'src\Properties',
@@ -125,7 +127,9 @@ $expectedClasses = @(
     'DockSettingsWindow',
     'TaskApp',
     'RecentDestination',
-    'AudioController'
+    'AudioController',
+    'MediaSessionService',
+    'MediaSessionSnapshot'
 )
 
 foreach ($className in $expectedClasses) {

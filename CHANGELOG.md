@@ -2,7 +2,24 @@
 
 Todas as mudanças relevantes serão registradas neste arquivo. O formato segue [Keep a Changelog](https://keepachangelog.com/pt-BR/1.1.0/) e o projeto pretende adotar [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
-## [Não lançado]
+## [0.4.0] - 2026-11-19
+
+### Adicionado
+
+- Barra superior compacta inspirada em desktops Linux, exibida automaticamente quando a Dock não ocupa o topo, com janela ativa, espaços de trabalho, rede, volume, bateria, idioma, data e hora.
+- Indicador de Bluetooth na barra superior, com leitura do estado ligado, desligado ou indisponível e acesso aos Ajustes Rápidos.
+- Player compacto e responsivo na Dock para a sessão de mídia recomendada pelo Windows, com capa, identificação do aplicativo, título, play/pause, faixa anterior e próxima.
+- Opções para habilitar o player e ocultá-lo quando não houver mídia na página de Personalização.
+
+### Alterado
+
+- O ícone de volume da barra superior agora abre os Ajustes Rápidos do Windows, junto aos controles de rede e saída de áudio.
+- O indicador do espaço de trabalho ativo na barra superior agora acompanha em tempo real a cor de destaque escolhida nas configurações do Windows.
+- A identificação do usuário na barra superior agora usa a foto da conta do Windows recortada por uma elipse real, com avatar padrão como fallback.
+- Barra superior sem contorno inferior translúcido e com reserva integral da área de trabalho, mantendo o fundo contínuo sem cobrir os controles das janelas maximizadas.
+- Orquestração da Dock dividida em partes por responsabilidade para isolar aplicativos, configurações, monitoramento do sistema, ciclo nativo, painéis do Shell, interoperação Win32, espaços de trabalho e posicionamento, sem alterar o comportamento existente.
+- Player de mídia sem contorno, com corpo da mesma altura-base dos ícones, capa arredondada sobressaindo, controles brancos, participação na onda de ampliação e fundo derivado da cor predominante da capa.
+- O cartão de horário e controles do sistema da Dock agora fica oculto enquanto a barra superior está ativa, evitando informações duplicadas, e reaparece automaticamente quando ela é desativada.
 
 ## [0.3.0] - 2026-11-06
 

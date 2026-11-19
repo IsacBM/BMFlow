@@ -1093,6 +1093,16 @@ private void BuildGeneralPage(StackPanel content)
             card.Child = stack;
             stack.Children.Add(ChoiceControl("Posição na tela", DockWindow.DockPositionChoices, dock.CurrentDockPosition, dock.SetDockPosition));
             stack.Children.Add(Divider());
+            var topBarCheck = Toggle(
+                "Exibir barra superior",
+                dock.IsDockAtTop
+                    ? "A barra fica oculta automaticamente enquanto a Dock ocupa a borda superior."
+                    : "Mostra informações da janela ativa, espaços de trabalho e indicadores do sistema no topo.",
+                dock.ShowTopBar);
+            topBarCheck.Checked += delegate { dock.SetTopBarEnabled(true); };
+            topBarCheck.Unchecked += delegate { dock.SetTopBarEnabled(false); };
+            stack.Children.Add(topBarCheck);
+            stack.Children.Add(Divider());
             stack.Children.Add(SliderControl("Tamanho dos ícones", "px", 40, 64, dock.CurrentIconSize, dock.SetDockIconSize));
             stack.Children.Add(Divider());
             stack.Children.Add(SliderControl("Largura do indicador", "px", 4, 18, dock.CurrentIndicatorWidth, dock.SetRunningIndicatorWidth));
@@ -1224,6 +1234,37 @@ private void BuildGeneralPage(StackPanel content)
         private void BuildWidgetsPage(StackPanel content)
         {
             content.Children.Add(PageHeader("\uE74C", "Widgets e Personalização", "Complementos visuais e utilitários para enriquecer a sua experiência no Windows."));
+            content.Children.Add(SectionTitle("Player de Mídia", "Controle a reprodução atual diretamente pela Dock"));
+
+            var mediaCard = SettingsCard();
+            var mediaStack = new StackPanel();
+            var mediaEnabled = Toggle(
+                "Exibir player de mídia",
+                "Mostra capa, título e controles para a sessão recomendada pelo Windows.",
+                dock.CurrentShowMediaPlayer);
+            var mediaHideInactive = Toggle(
+                "Ocultar quando não houver mídia",
+                "A cápsula aparece somente quando um aplicativo fornece uma faixa ou vídeo válido.",
+                dock.CurrentHideMediaWhenInactive);
+            mediaHideInactive.IsEnabled = dock.CurrentShowMediaPlayer;
+            mediaEnabled.Checked += delegate
+            {
+                mediaHideInactive.IsEnabled = true;
+                dock.SetShowMediaPlayer(true);
+            };
+            mediaEnabled.Unchecked += delegate
+            {
+                mediaHideInactive.IsEnabled = false;
+                dock.SetShowMediaPlayer(false);
+            };
+            mediaHideInactive.Checked += delegate { dock.SetHideMediaWhenInactive(true); };
+            mediaHideInactive.Unchecked += delegate { dock.SetHideMediaWhenInactive(false); };
+            mediaStack.Children.Add(mediaEnabled);
+            mediaStack.Children.Add(Divider());
+            mediaStack.Children.Add(mediaHideInactive);
+            mediaCard.Child = mediaStack;
+            content.Children.Add(mediaCard);
+
             content.Children.Add(SectionTitle("Temas de Cursor", "Alterne entre os ponteiros do macOS e Windows 11 Fluent"));
 
             var card = SettingsCard();

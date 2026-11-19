@@ -18,6 +18,7 @@ namespace DockBar
         private string dockPosition = DockBottomPosition;
         private Grid dockRoot;
         private FrameworkElement systemCardHolder;
+        private FrameworkElement systemCardSeparator;
         private Grid systemCardGrid;
         private StackPanel systemClockStack;
         private Grid systemTrayGrid;
@@ -58,6 +59,7 @@ namespace DockBar
             edgeRevealTimer.Stop();
             HidePreview();
             ApplyDockOrientation();
+            UpdateTopBarVisibility();
             UpdateAppBarRegistration();
             SchedulePositionDock();
             SaveSettings();
@@ -131,6 +133,7 @@ namespace DockBar
 
             ApplySeparatorOrientation(vertical);
             ApplySystemCardOrientation(vertical);
+            UpdateMediaPlayerOrientation(vertical);
             EnforceMascotPositionPolicy();
             waveLayoutDirty = true;
             if (dockMascot != null) dockMascot.NotifyDockPositionChanged();
